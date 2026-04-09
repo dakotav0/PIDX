@@ -1,0 +1,22 @@
+[workspace]
+members  = [".", "pidx-ui/src-tauri", "pidx-mcp"]
+resolver = "2"
+
+[package]
+name = "pidx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde    = { version = "1.0", features = ["derive"] }
+schemars = { version = "0.8", features = ["chrono"] }
+serde_json = "1.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+notify = "6"

@@ -1,0 +1,897 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Annotation": {
+      "description": "A user or system note attached to a specific profile field.\n\nAnnotations never decay. Pinned annotations appear in Rich-tier output.",
+      "properties": {
+        "author": {
+          "default": "system",
+          "description": "`\"user\"` | `\"system\"`",
+          "type": "string"
+        },
+        "created_at": {
+          "default": "1970-01-01T00:00:00Z",
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "pinned": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "field",
+        "id",
+        "note"
+      ],
+      "type": "object"
+    },
+    "BridgeLog": {
+      "properties": {
+        "pending_filenames": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "processed": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/BridgeLogEntry"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BridgeLogEntry": {
+      "description": "Audit record for one processed bridge packet.",
+      "properties": {
+        "deltas_flagged": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "ingested_at": {
+          "default": "1970-01-01T00:00:00Z",
+          "type": "string"
+        },
+        "observations_proposed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "filename"
+      ],
+      "type": "object"
+    },
+    "CleanupPolicy": {
+      "properties": {
+        "cadence": {
+          "default": "session",
+          "description": "\"event\" | \"session\" | \"weekly\" | \"monthly\"",
+          "type": "string"
+        },
+        "mode": {
+          "default": "prompted",
+          "description": "\"prompted\" | \"background\"",
+          "type": "string"
+        },
+        "threshold": {
+          "default": 0.2,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "DeltaItem": {
+      "description": "An unresolved conflict between two observations for the same field.\n\nThe field is inert (neither `a` nor `b` is used as the active value) until the conflict is explicitly resolved by the user or engine.",
+      "properties": {
+        "a": {
+          "$ref": "#/definitions/Observation"
+        },
+        "b": {
+          "$ref": "#/definitions/Observation"
+        },
+        "created_at": {
+          "default": "1970-01-01T00:00:00Z",
+          "type": "string"
+        },
+        "field": {
+          "description": "Dot-path to the conflicting field (e.g. `\"identity.core[0]\"`).",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "resolved": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "field",
+        "id"
+      ],
+      "type": "object"
+    },
+    "DomainEntry": {
+      "description": "A domain expertise cluster observation value.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "proficiency": {
+          "description": "Optional expertise tier. e.g. \"beginner\" | \"intermediate\" | \"expert\" | \"architect\". Absent in old profiles — omitted from JSON when None.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "weight": {
+          "default": 0.6,
+          "description": "Relative weight of this domain in the overall cluster (0.0–1.0). Defaults to 0.60 on deserialize — matches `profile.py:121`.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "type": "object"
+    },
+    "Evidence": {
+      "description": "A single observed signal contributing to a communication register dimension.\n\nEvidence is additive — unlike `Observation`, evidence items are never in conflict. When a new `BridgePacket` arrives, its register evidence is appended to the existing pool; no delta detection runs on it.",
+      "properties": {
+        "decay_exempt": {
+          "description": "When true, this evidence item contributes its full weight regardless of age.",
+          "type": "boolean"
+        },
+        "evidence_type": {
+          "$ref": "#/definitions/EvidenceType"
+        },
+        "metric": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetricName"
+            }
+          ],
+          "description": "Which register dimension this evidence feeds."
+        },
+        "observed_at": {
+          "description": "ISO 8601 timestamp (no timezone suffix, matching Python output).",
+          "type": "string"
+        },
+        "orientation": {
+          "description": "Which model or system produced this evidence item.",
+          "type": "string"
+        },
+        "raw": {
+          "description": "The actual phrase or pattern that was observed verbatim.",
+          "type": "string"
+        },
+        "session_ref": {
+          "type": "string"
+        },
+        "signal": {
+          "description": "Directional contribution to the score: +1 (high), 0 (neutral), -1 (low).\n\n`i8` is the right primitive here — smallest signed integer. We'll add a validated newtype if we ever need to enforce the -1/0/+1 constraint at the type level, but that's premature for now.",
+          "format": "int8",
+          "type": "integer"
+        },
+        "weight": {
+          "description": "Recency/strength weight. Convention: 0.3 isolated, 0.6 repeated, 0.9 sustained.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "decay_exempt",
+        "evidence_type",
+        "metric",
+        "observed_at",
+        "orientation",
+        "raw",
+        "session_ref",
+        "signal",
+        "weight"
+      ],
+      "type": "object"
+    },
+    "EvidenceType": {
+      "description": "The linguistic pattern that produced a piece of register evidence.\n\nEach type maps to one or more `RegisterMetricName` dimensions via the signal taxonomy. For example, `HedgingPhrase` feeds into `Hedging` (+1), while `IronicUnderstatement` feeds into `Humor` (+1) — *not* `Hedging`, even though it looks like hedging on the surface.",
+      "enum": [
+        "hedging_phrase",
+        "direct_assertion",
+        "qualification_clause",
+        "question_pattern",
+        "ironic_understatement",
+        "technical_register",
+        "casual_register",
+        "humor_marker",
+        "abstract_framing",
+        "concrete_example"
+      ],
+      "type": "string"
+    },
+    "Identity": {
+      "properties": {
+        "core": {
+          "default": [],
+          "description": "Each element tracks one distinct core personality trait.",
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "reasoning": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/IdentityReasoning"
+            }
+          ],
+          "default": {
+            "intake": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "pattern": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "stance": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "style": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        }
+      },
+      "type": "object"
+    },
+    "IdentityReasoning": {
+      "properties": {
+        "intake": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "pattern": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "stance": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          },
+          "description": "Default epistemic/affective orientation toward uncertainty. Singleton — conflicting observations trigger delta detection. Examples: \"skeptical-by-default\", \"curious-first\", \"deferential until evidence\"."
+        },
+        "style": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    },
+    "Observation": {
+      "description": "An atomic unit of profile data with full provenance.\n\nEvery field in a profile is built from one or more of these. The confidence is never just a number — it degrades over time based on the field class.",
+      "properties": {
+        "confidence": {
+          "description": "Base confidence from the origination × orientation matrix. Use `effective_confidence()` at read-time — never store the computed value.",
+          "format": "double",
+          "type": "number"
+        },
+        "decay_exempt": {
+          "description": "When true, skip decay entirely. Always set for user-originated observations on identity and value fields.",
+          "type": "boolean"
+        },
+        "revision": {
+          "description": "Incremented each time this observation is updated in-place.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "source": {
+          "$ref": "#/definitions/ObservationSource"
+        },
+        "status": {
+          "$ref": "#/definitions/ObservationStatus"
+        },
+        "value": {
+          "$ref": "#/definitions/ObservationValue"
+        },
+        "weight": {
+          "description": "Field-class decay modifier (1.0 for most observations).",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "confidence",
+        "decay_exempt",
+        "revision",
+        "source",
+        "status",
+        "value",
+        "weight"
+      ],
+      "type": "object"
+    },
+    "ObservationField": {
+      "description": "A keyed collection of observations for a single profile field.\n\nMultiple observations can exist for the same field (e.g. the same trait observed in different sessions). Methods here operate over the collection to surface the current active value or detect conflicts.",
+      "properties": {
+        "observations": {
+          "items": {
+            "$ref": "#/definitions/Observation"
+          },
+          "type": "array"
+        },
+        "proposal_count": {
+          "description": "How many times this specific value has been proposed across all bridge packets. Starts at 1 (the first proposal). Incremented instead of creating a duplicate slot when the same value arrives in a subsequent packet. Counts as a confidence signal: high repetition → higher salience, shown as \"(×N)\" in status output.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "observations"
+      ],
+      "type": "object"
+    },
+    "ObservationSource": {
+      "description": "Full provenance for a single observation — who made it, from where, and when.",
+      "properties": {
+        "orientation": {
+          "description": "Free-form orientation string: \"claude.sonnet-4-6\", \"local:gemma3:4b\", \"algorithmic\", \"user\", etc. The confidence matrix uses its prefix.",
+          "type": "string"
+        },
+        "origination": {
+          "$ref": "#/definitions/Origination"
+        },
+        "session_ref": {
+          "description": "SHA-derived session identifier for audit trail.",
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "ISO 8601 timestamp string. Stored as a String to stay compatible with Python's `datetime.utcnow().isoformat()` output (no timezone suffix).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "orientation",
+        "origination",
+        "session_ref",
+        "timestamp"
+      ],
+      "type": "object"
+    },
+    "ObservationStatus": {
+      "description": "Lifecycle state of a single observation.\n\nThe valid transitions are: proposed → confirmed (user or engine accepts it) confirmed → delta    (a conflicting observation arrives) confirmed → archived (cleanup pass retires it) any      → rejected  (permanent terminal state — never deleted)\n\n`delta` means the field is inert: two observations conflict and the engine is waiting for explicit resolution before using either value.",
+      "enum": [
+        "proposed",
+        "confirmed",
+        "rejected",
+        "delta",
+        "archived"
+      ],
+      "type": "string"
+    },
+    "ObservationValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/definitions/DomainEntry"
+        }
+      ],
+      "description": "All concrete types an observation value can hold.\n\n## Why an enum instead of a generic Observation<T>?\n\nPython's `Observation[T]` works because Pydantic erases the generic at runtime — all it needs is a JSON blob. Rust generics are monomorphized: `Observation<String>` and `Observation<DomainEntry>` are different types with no common base, so you can't store them in the same `Vec`.\n\nAn enum is the idiomatic Rust alternative. It's a \"sum type\" — a value that is exactly one of its variants at runtime. The compiler knows every possible shape, and a `match` on it is exhaustive: add a new variant here and every `match ObservationValue { ... }` in the codebase becomes a compile error until you handle it.\n\n`#[serde(untagged)]` tells serde to serialize/deserialize the inner value directly without a wrapper key. `Text(\"hello\")` → `\"hello\"` in JSON. `Domain(DomainEntry { .. })` → `{\"label\": \"...\", \"weight\": 1.0}`. This matches the Python output exactly."
+    },
+    "Origination": {
+      "description": "Where an observation came from — who or what generated it.\n\nThis is one axis of the confidence matrix. Combined with the orientation (which system produced it), it determines the base confidence score.",
+      "oneOf": [
+        {
+          "description": "The user stated this directly about themselves.",
+          "enum": [
+            "user"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An AI model actively elicited this (structured prompting).",
+          "enum": [
+            "active"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An AI model inferred this passively from conversation.",
+          "enum": [
+            "passive"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Synced from a local model bridge session.",
+          "enum": [
+            "sync"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Computed automatically (decay cleanup, version bumps, etc.).",
+          "enum": [
+            "system"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ProfileMeta": {
+      "properties": {
+        "cleanup_policy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CleanupPolicy"
+            }
+          ],
+          "default": {
+            "cadence": "session",
+            "mode": "prompted",
+            "threshold": 0.2
+          }
+        },
+        "created": {
+          "default": "1970-01-01T00:00:00Z",
+          "description": "Timestamp of profile creation. Written as RFC 3339 UTC by Rust (`\"2026-04-07T06:45:37.123456+00:00\"`). Python-generated profiles use naive ISO 8601 (`\"2026-04-07T00:45:37.688857\"`); both are valid on read.",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "overall_confidence": {
+          "default": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "schema_version": {
+          "default": "0.1.0",
+          "type": "string"
+        },
+        "updated": {
+          "default": "1970-01-01T00:00:00Z",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "Register": {
+      "description": "Six communication register dimensions, each backed by an evidence pool.\n\nSerializes as `\"comm\"` in JSON (the Python field name, not its alias).",
+      "properties": {
+        "abstraction": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "affect": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          },
+          "description": "Emotional warmth / expressiveness vs. affective neutrality. High affect (8+): warm, emotionally present language. Low affect (2−): detached, neutral, professionally distanced."
+        },
+        "directness": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "formality": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "hedging": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "humor": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        }
+      },
+      "type": "object"
+    },
+    "RegisterMetric": {
+      "description": "Evidence pool for a single communication register dimension.\n\nThe score is **always computed at read-time** — never stored. This ensures the score always reflects the current age of evidence. An empty pool returns a neutral score of 5.0.",
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/definitions/Evidence"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "RegisterMetricName": {
+      "description": "Communication register dimensions.\n\nEach is an independent evidence pool — a score of 5.0 means neutral (no evidence), 0.0 is the minimum, 10.0 is max.",
+      "oneOf": [
+        {
+          "enum": [
+            "formality",
+            "directness",
+            "hedging",
+            "humor",
+            "abstraction"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Emotional warmth / expressiveness vs. affective neutrality. High affect (8+): warm, emotionally present language. Low affect (2−): detached, neutral, professionally distanced.",
+          "enum": [
+            "affect"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ReviewItem": {
+      "description": "An observation that has decayed below the cleanup threshold and is awaiting user review before being archived or discarded.",
+      "properties": {
+        "effective_confidence": {
+          "format": "double",
+          "type": "number"
+        },
+        "field": {
+          "type": "string"
+        },
+        "flagged_at": {
+          "default": "1970-01-01T00:00:00Z",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "observation_index": {
+          "description": "Index into the relevant `ObservationField.observations` list.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "resolved": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "effective_confidence",
+        "field",
+        "id",
+        "observation_index"
+      ],
+      "type": "object"
+    },
+    "Signals": {
+      "properties": {
+        "avoidances": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "framings": {
+          "default": [],
+          "description": "Conceptual scaffolds the user reaches for — systems-first, narrative-first, empirical-first, relational-first. Different in kind from surface phrases.",
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "phrases": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "rhythms": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Working": {
+      "properties": {
+        "feedback": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "pace": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "pattern": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    }
+  },
+  "description": "The complete PIDX profile for one user.\n\nThis is the root struct that serializes to/from `{user_id}.pidx.json`. All sub-fields default to empty so a profile with only `meta` populated deserializes cleanly.",
+  "properties": {
+    "annotations": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/Annotation"
+      },
+      "type": "array"
+    },
+    "bridge_log": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/BridgeLog"
+        }
+      ],
+      "default": {
+        "pending_filenames": [],
+        "processed": []
+      }
+    },
+    "comm": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Register"
+        }
+      ],
+      "default": {
+        "abstraction": {
+          "evidence": []
+        },
+        "affect": {
+          "evidence": []
+        },
+        "directness": {
+          "evidence": []
+        },
+        "formality": {
+          "evidence": []
+        },
+        "hedging": {
+          "evidence": []
+        },
+        "humor": {
+          "evidence": []
+        }
+      },
+      "description": "Communication register. JSON key is `\"comm\"` — the Python attribute name, not its Pydantic alias (`\"register\"`). Both names exist in Python but `model_dump_json()` writes the attribute name, so saved files use `\"comm\"`."
+    },
+    "delta_queue": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/DeltaItem"
+      },
+      "type": "array"
+    },
+    "domains": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/ObservationField"
+      },
+      "type": "array"
+    },
+    "identity": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Identity"
+        }
+      ],
+      "default": {
+        "core": [],
+        "reasoning": {
+          "intake": {
+            "observations": [],
+            "proposal_count": 0
+          },
+          "pattern": {
+            "observations": [],
+            "proposal_count": 0
+          },
+          "stance": {
+            "observations": [],
+            "proposal_count": 0
+          },
+          "style": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      }
+    },
+    "meta": {
+      "$ref": "#/definitions/ProfileMeta"
+    },
+    "review_queue": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/ReviewItem"
+      },
+      "type": "array"
+    },
+    "signals": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Signals"
+        }
+      ],
+      "default": {
+        "avoidances": [],
+        "framings": [],
+        "phrases": [],
+        "rhythms": []
+      }
+    },
+    "values": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/ObservationField"
+      },
+      "type": "array"
+    },
+    "working": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/Working"
+        }
+      ],
+      "default": {
+        "feedback": {
+          "observations": [],
+          "proposal_count": 0
+        },
+        "mode": {
+          "observations": [],
+          "proposal_count": 0
+        },
+        "pace": {
+          "observations": [],
+          "proposal_count": 0
+        },
+        "pattern": {
+          "observations": [],
+          "proposal_count": 0
+        }
+      }
+    }
+  },
+  "required": [
+    "meta"
+  ],
+  "title": "ProfileDocument",
+  "type": "object"
+}

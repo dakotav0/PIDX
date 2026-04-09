@@ -1,0 +1,15 @@
+# Runtime data — never trigger a Tauri rebuild
+profiles/
+profiles/**
+
+transcripts/
+transcripts/**
+
+# Python archive — not Rust source
+pyrchive/
+pyrchive/**
+
+# Scratch/spec files
+*.pidx.json
+*.bridge.json
+*.md

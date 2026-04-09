@@ -1,0 +1,4 @@
+# Patterns here only apply to files *within* src-tauri/ itself.
+# To ignore workspace-level paths (profiles/, transcripts/, etc.)
+# see PIDX/.taurignore at the workspace root — that's what Tauri actually reads.
+gen/

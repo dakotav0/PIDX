@@ -1,0 +1,28 @@
+[package]
+name    = "pidx-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pidx-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# PIDX library — same workspace, path dep
+pidx = { path = ".." }
+
+# MCP SDK: server + macros + stdio only; skip hyper/sse/client
+rust-mcp-sdk = { version = "0.9", default-features = false, features = ["server", "macros", "stdio"] }
+async-trait   = "0.1"
+
+# Runtime / serialization — already in the workspace, versions match
+tokio        = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+anyhow       = "1"
+uuid         = { version = "1.0", features = ["v4"] }
+chrono       = { version = "0.4", features = ["serde"] }
+
+# Logging — stderr only so stdout stays clean for JSON-RPC
+tracing             = "0.1"
+tracing-subscriber  = { version = "0.3", features = ["env-filter"] }
