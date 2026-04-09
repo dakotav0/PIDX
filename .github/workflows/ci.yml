@@ -18,14 +18,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build (excluding Tauri UI)
-        run: cargo build --workspace --exclude pidx-ui
+      - name: Build (excluding Tauri UI and MCP)
+        run: cargo build --workspace --exclude pidx-ui --exclude pidx-mcp
 
-      - name: Test (excluding Tauri UI)
-        run: cargo test --workspace --exclude pidx-ui
+      - name: Test (excluding Tauri UI and MCP)
+        run: cargo test --workspace --exclude pidx-ui --exclude pidx-mcp
 
-      - name: Clippy (excluding Tauri UI)
-        run: cargo clippy --workspace --exclude pidx-ui -- -D warnings
+      - name: Clippy (excluding Tauri UI and MCP)
+        run: cargo clippy --workspace --exclude pidx-ui --exclude pidx-mcp -- -D warnings
 
       - name: Check schema drift
         run: |
