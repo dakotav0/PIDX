@@ -15,7 +15,7 @@ use tracing::error;
 use models::bridge::BridgePacket;
 use models::decay::FieldClass;
 use models::observation::{ObservationField, ObservationStatus, ObservationValue};
-use models::profile::{Annotation, DeltaItem, ProfileDocument, ProfileMeta, ReviewItem};
+use models::profile::{Annotation, DeltaItem, ProfileMeta, ReviewItem, ProfileWrapper};
 use output::Tier;
 use storage::ProfileStore;
 
@@ -310,7 +310,11 @@ enum ReviewCmd {
 
 // ── Field path helpers ────────────────────────────────────────────────────────
 
-fn all_fields(profile: &ProfileDocument) -> Vec<(String, &ObservationField)> {
+fn all_fields(wrapper: &ProfileWrapper) -> Vec<(String, &ObservationField)> {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => return vec![], // NPC fields could be mapped later
+    };
     let mut v: Vec<(String, &ObservationField)> = Vec::new();
     for (i, f) in profile.identity.core.iter().enumerate() {
         v.push((format!("identity.core.{i}"), f));
@@ -333,9 +337,13 @@ fn all_fields(profile: &ProfileDocument) -> Vec<(String, &ObservationField)> {
 }
 
 fn resolve_field_mut<'a>(
-    profile: &'a mut ProfileDocument,
+    wrapper: &'a mut ProfileWrapper,
     path: &str,
 ) -> Option<&'a mut ObservationField> {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => return None,
+    };
     let parts: Vec<&str> = path.splitn(3, '.').collect();
     match parts.as_slice() {
         ["identity", "core", rest] => {
@@ -376,6 +384,7 @@ fn resolve_field_mut<'a>(
 fn val_str(v: &ObservationValue) -> String {
     match v {
         ObservationValue::Text(s)   => s.clone(),
+        ObservationValue::Number(n) => n.to_string(),
         ObservationValue::Domain(d) => format!("{} ({:.0}%)", d.label, d.weight * 100.0),
     }
 }
@@ -384,6 +393,7 @@ fn val_str(v: &ObservationValue) -> String {
 fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
     field.active(fc).map(|v| match v {
         ObservationValue::Text(s)   => s.clone(),
+        ObservationValue::Number(n) => n.to_string(),
         ObservationValue::Domain(d) => d.label.clone(),
     })
 }
@@ -419,7 +429,11 @@ fn cmd_show(user_id: &str, tier: Tier, format: Format) -> Result<()> {
     Ok(())
 }
 
-fn build_show_json(profile: &mut ProfileDocument, tier: Tier) -> ShowJson {
+fn build_show_json(wrapper: &mut ProfileWrapper, tier: Tier) -> ShowJson {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(p) => return build_npc_show_json(p, tier),
+    };
     use chrono::Utc;
 
     profile.recompute_overall_confidence();
@@ -482,6 +496,7 @@ fn build_show_json(profile: &mut ProfileDocument, tier: Tier) -> ShowJson {
                     label: d.label.clone(),
                     weight_pct: (d.weight * 100.0).round() as u32,
                 },
+                ObservationValue::Number(n) => DomainJson { label: n.to_string(), weight_pct: 0 },
                 ObservationValue::Text(s) => DomainJson { label: s.clone(), weight_pct: 0 },
             })
             .collect();
@@ -608,14 +623,14 @@ fn cmd_status(user_id: &str, format: Format) -> Result<()> {
 
         let out = StatusJson {
             user_id,
-            version: &profile.meta.version,
-            overall_confidence: profile.meta.overall_confidence,
-            updated: &profile.meta.updated,
+            version: &profile.meta().version,
+            overall_confidence: profile.meta().overall_confidence,
+            updated: &profile.meta().updated,
             fields: field_summaries,
             totals: TotalsJson { confirmed: total_confirmed, proposed: total_proposed, delta: total_delta },
-            delta_queue_open:       profile.delta_queue.iter().filter(|d| !d.resolved).count(),
-            review_queue_pending:   profile.review_queue.iter().filter(|r| !r.resolved).count(),
-            bridge_log_processed:   profile.bridge_log.processed.len(),
+            delta_queue_open:       profile.delta_queue().iter().filter(|d| !d.resolved).count(),
+            review_queue_pending:   profile.review_queue().iter().filter(|r| !r.resolved).count(),
+            bridge_log_processed:   profile.bridge_log().processed.len(),
         };
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
@@ -624,7 +639,7 @@ fn cmd_status(user_id: &str, format: Format) -> Result<()> {
     // ── human mode ───────────────────────────────────────────────────────────
     eprintln!(
         "{user_id}  v{}  conf:{:.2}  updated: {}",
-        profile.meta.version, profile.meta.overall_confidence, profile.meta.updated,
+        profile.meta().version, profile.meta().overall_confidence, profile.meta().updated,
     );
     eprintln!();
 
@@ -686,9 +701,9 @@ fn cmd_status(user_id: &str, format: Format) -> Result<()> {
         eprintln!("  total: {total_confirmed} confirmed, {total_proposed} proposed, {total_delta} delta");
     }
     eprintln!();
-    let open_deltas = profile.delta_queue.iter().filter(|d| !d.resolved).count();
-    let open_review = profile.review_queue.iter().filter(|r| !r.resolved).count();
-    let bridge_done = profile.bridge_log.processed.len();
+    let open_deltas = profile.delta_queue().iter().filter(|d| !d.resolved).count();
+    let open_review = profile.review_queue().iter().filter(|r| !r.resolved).count();
+    let bridge_done = profile.bridge_log().processed.len();
     eprintln!(
         "  delta_queue: {open_deltas} open  |  review_queue: {open_review} pending  |  bridge_log: {bridge_done} processed"
     );
@@ -813,12 +828,12 @@ fn cmd_clear(user_id: &str, target: &str, format: Format) -> Result<()> {
     let mut cleared_count = 0;
 
     if target == "deltas" || target == "all" {
-        cleared_count += profile.delta_queue.len();
-        profile.delta_queue.clear();
+        cleared_count += profile.delta_queue().len();
+        profile.delta_queue_mut().clear();
     }
     if target == "reviews" || target == "all" {
-        cleared_count += profile.review_queue.len();
-        profile.review_queue.clear();
+        cleared_count += profile.review_queue().len();
+        profile.review_queue_mut().clear();
     }
     if target == "proposed" || target == "all" {
         let matching = ingestion::reject_all_proposed(&mut profile, "");
@@ -845,7 +860,7 @@ fn cmd_delta_list(user_id: &str, format: Format) -> Result<()> {
     let store = ProfileStore::new(ProfileStore::default_dir());
     let profile = store.load_or_create(user_id)?;
 
-    let open: Vec<&DeltaItem> = profile.delta_queue.iter().filter(|d| !d.resolved).collect();
+    let open: Vec<&DeltaItem> = profile.delta_queue().iter().filter(|d| !d.resolved).collect();
 
     if format == Format::Json {
         let json_deltas: Vec<ConflictJson> = open.iter().map(|d| ConflictJson {
@@ -884,14 +899,14 @@ fn cmd_delta_resolve(user_id: &str, delta_id: &str, keep: &str, format: Format) 
     let mut profile = store.load_or_create(user_id)?;
 
     let (field_path, keep_session, reject_session) = {
-        let d = profile.delta_queue.iter()
+        let d = profile.delta_queue().iter()
             .find(|d| d.id == delta_id && !d.resolved)
             .ok_or_else(|| anyhow::anyhow!("no open delta with id '{delta_id}'"))?;
         let (keep_obs, reject_obs) = if keep == "a" { (&d.a, &d.b) } else { (&d.b, &d.a) };
         (d.field.clone(), keep_obs.source.session_ref.clone(), reject_obs.source.session_ref.clone())
     };
 
-    for d in profile.delta_queue.iter_mut() {
+    for d in profile.delta_queue_mut().iter_mut() {
         if d.id == delta_id { d.resolved = true; break; }
     }
 
@@ -955,7 +970,7 @@ fn cmd_ingest(user_id: &str, packet_path: &std::path::Path, format: Format) -> R
             value: None,
             new_status: None,
             observations_proposed: Some(n_obs),
-            overall_confidence: Some(profile.meta.overall_confidence),
+            overall_confidence: Some(profile.meta().overall_confidence),
         })?);
     } else {
         eprintln!("Ingested {n_obs} observations from session '{session}' into '{user_id}'.");
@@ -982,7 +997,7 @@ fn cmd_annotate(user_id: &str, field: &str, note: &str, pinned: bool, format: Fo
         pinned,
     };
 
-    profile.annotations.push(annotation.clone());
+    profile.annotations_mut().push(annotation.clone());
     store.save(&mut profile)?;
 
     if format == Format::Json {
@@ -1005,7 +1020,7 @@ fn cmd_review_list(user_id: &str, format: Format) -> Result<()> {
     let store = ProfileStore::new(ProfileStore::default_dir());
     let profile = store.load_or_create(user_id)?;
 
-    let pending: Vec<&ReviewItem> = profile.review_queue.iter().filter(|r| !r.resolved).collect();
+    let pending: Vec<&ReviewItem> = profile.review_queue().iter().filter(|r| !r.resolved).collect();
 
     if format == Format::Json {
         let json_items: Vec<serde_json::Value> = pending.iter().map(|r| serde_json::json!({
@@ -1044,7 +1059,7 @@ fn cmd_review_process(user_id: &str, review_id: &str, action: &str, format: Form
     let mut profile = store.load_or_create(user_id)?;
 
     let (field_path, obs_idx) = {
-        let r = profile.review_queue.iter_mut()
+        let r = profile.review_queue_mut().iter_mut()
             .find(|r| r.id == review_id && !r.resolved)
             .ok_or_else(|| anyhow::anyhow!("no pending review item with id '{review_id}'"))?;
         r.resolved = true;
@@ -1088,8 +1103,14 @@ fn cmd_review_process(user_id: &str, review_id: &str, action: &str, format: Form
 
 fn cmd_diff(user_a: &str, user_b: &str, format: Format) -> Result<()> {
     let store = ProfileStore::new(ProfileStore::default_dir());
-    let mut pa = store.load_or_create(user_a)?;
-    let mut pb = store.load_or_create(user_b)?;
+    let mut pa = match store.load_or_create(user_a)? {
+        ProfileWrapper::Human(h) => h,
+        ProfileWrapper::Npc(_) => anyhow::bail!("Diff not supported for NPCs"),
+    };
+    let mut pb = match store.load_or_create(user_b)? {
+        ProfileWrapper::Human(h) => h,
+        ProfileWrapper::Npc(_) => anyhow::bail!("Diff not supported for NPCs"),
+    };
 
     pa.recompute_overall_confidence();
     pb.recompute_overall_confidence();
@@ -1201,9 +1222,9 @@ fn cmd_list_users(format: Format) -> Result<()> {
             } {
                 users.push(UserSummary {
                     user_id: user_id.to_string(),
-                    version: profile.meta.version,
-                    updated: profile.meta.updated,
-                    overall_confidence: profile.meta.overall_confidence,
+                    version: profile.meta().version.clone(),
+                    updated: profile.meta().updated.clone(),
+                    overall_confidence: profile.meta().overall_confidence,
                 });
             }
         }
@@ -1243,7 +1264,7 @@ fn cmd_decay(user_id: &str, threshold: f64, format: Format) -> Result<()> {
         store.save(&mut profile)?;
     }
 
-    let pending = profile.review_queue.iter().filter(|r| !r.resolved).count();
+    let pending = profile.review_queue().iter().filter(|r| !r.resolved).count();
 
     if format == Format::Json {
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
@@ -1342,12 +1363,12 @@ fn cmd_watch(user_id: &str, dir: Option<std::path::PathBuf>, format: Format) -> 
                     "file": name,
                     "observations_proposed": proposed,
                     "deltas_flagged": deltas,
-                    "overall_confidence": profile.meta.overall_confidence,
+                    "overall_confidence": profile.meta().overall_confidence,
                 }))?);
             } else {
                 eprintln!(
                     "  [{}] proposed:{proposed}  deltas:{deltas}  conf:{:.2}",
-                    name, profile.meta.overall_confidence,
+                    name, profile.meta().overall_confidence,
                 );
             }
         }
@@ -1402,5 +1423,22 @@ fn main() {
             error!("{e}");
         }
         std::process::exit(1);
+    }
+}
+
+fn build_npc_show_json(p: &mut crate::models::miin_profile::MiinProfileDocument, _tier: Tier) -> ShowJson {
+    ShowJson {
+        tier: _tier.to_string(),
+        version: p.meta.version.clone(),
+        overall_confidence: p.meta.overall_confidence,
+        core: vec![],
+        register: HashMap::new(),
+        working: HashMap::new(),
+        domains: vec![],
+        values: vec![],
+        reasoning: HashMap::new(),
+        signals: HashMap::new(),
+        annotations: vec![],
+        unresolved_conflicts: vec![],
     }
 }

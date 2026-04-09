@@ -67,6 +67,7 @@ impl std::str::FromStr for Tier {
 fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
     field.active(fc).map(|v| match v {
         ObservationValue::Text(s)   => s.clone(),
+        ObservationValue::Number(n) => n.to_string(),
         ObservationValue::Domain(d) => d.label.clone(),
     })
 }
@@ -75,6 +76,7 @@ fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
 fn value_display(v: &ObservationValue) -> String {
     match v {
         ObservationValue::Text(s)   => s.clone(),
+        ObservationValue::Number(n) => n.to_string(),
         ObservationValue::Domain(d) => d.label.clone(),
     }
 }
@@ -162,6 +164,7 @@ fn section_domains(profile: &ProfileDocument) -> Option<String> {
                 ObservationValue::Domain(d) => {
                     format!("- {} ({:.0}%)", d.label, d.weight * 100.0)
                 }
+                ObservationValue::Number(n) => format!("- {n}"),
                 ObservationValue::Text(s) => format!("- {s}"),
             };
             entries.push(line);
@@ -274,7 +277,11 @@ fn section_deltas(profile: &ProfileDocument) -> Option<String> {
 /// Returns an empty string if no confirmed data exists at the requested tier.
 /// Calls `recompute_overall_confidence()` internally — the header always
 /// reflects the current state of the profile.
-pub fn render_tier_output(profile: &mut ProfileDocument, tier: Tier) -> String {
+pub fn render_tier_output(wrapper: &mut crate::models::profile::ProfileWrapper, tier: Tier) -> String {
+    let profile = match wrapper {
+        crate::models::profile::ProfileWrapper::Human(p) => p,
+        crate::models::profile::ProfileWrapper::Npc(p) => return render_npc_tier(p, tier),
+    };
     profile.recompute_overall_confidence();
     let conf    = profile.meta.overall_confidence;
     let version = profile.meta.version.clone();
@@ -405,4 +412,76 @@ pub fn compute_resonance(
 
     // Clamp to [0.5, 2.0] and round to 3 decimal places, matching Python.
     (score.clamp(0.5, 2.0) * 1000.0).round() / 1000.0
+}
+
+fn render_npc_tier(p: &mut crate::models::miin_profile::MiinProfileDocument, tier: Tier) -> String {
+    let mut out = Vec::new();
+
+    // Recompute derived behaviors from stats
+    p.recompute_derived_behaviors();
+
+    // Header: Name and Class
+    let class_str = if let Some(sec) = active_text(&p.class.secondary, FieldClass::NpcIdentity) {
+        format!("{} / {}", active_text(&p.class.primary, FieldClass::NpcIdentity).unwrap_or_else(|| "Unknown".to_string()), sec)
+    } else {
+        active_text(&p.class.primary, FieldClass::NpcIdentity).unwrap_or_else(|| "Citizen".to_string())
+    };
+
+    out.push(format!("# {} ({})", p.meta.id.to_uppercase(), class_str));
+    out.push(format!("*Tier: {} / v{}*", tier, p.meta.version));
+    out.push("".to_string());
+
+    if tier == Tier::Nano {
+        out.push(format!("**Status**: Active in {} sessions", p.bridge_log.processed.len()));
+        return out.join("\n");
+    }
+
+    // Behavior Block
+    out.push("### Behavior Baseline".to_string());
+    out.push("| Metric | Score | Effective |".to_string());
+    out.push("| :--- | :---: | :---: |".to_string());
+    
+    let metrics = [
+        ("Aggression", "aggression"),
+        ("Sociability", "sociability"),
+        ("Caution", "caution"),
+        ("Industriousness", "industriousness"),
+        ("Curiosity", "curiosity"),
+    ];
+
+    for (name, key) in metrics {
+        let derived = match key {
+            "aggression" => p.derive_aggression(),
+            "sociability" => p.derive_sociability(),
+            "caution" => p.derive_caution(),
+            "industriousness" => p.derive_industriousness(),
+            "curiosity" => p.derive_curiosity(),
+            _ => 0.0,
+        };
+        let effective = p.effective_behavior(key, None);
+        
+        out.push(format!("| {} | {:.2} | {:.2} |", name, derived, effective));
+    }
+
+    out.push("".to_string());
+
+    // Identity / Notes
+    if tier == Tier::Rich {
+        out.push("### Identity Context".to_string());
+        if let Some(moral) = active_text(&p.alignment.moral, FieldClass::NpcIdentity) {
+            out.push(format!("- **Alignment**: {} / {}", moral, active_text(&p.alignment.order, FieldClass::NpcIdentity).unwrap_or_default()));
+        }
+        
+        if !p.annotations.is_empty() {
+            out.push("".to_string());
+            out.push("### Annotations".to_string());
+            for a in &p.annotations {
+                if a.pinned {
+                    out.push(format!("- **[{}]**: {}", a.field, a.note));
+                }
+            }
+        }
+    }
+
+    out.join("\n")
 }

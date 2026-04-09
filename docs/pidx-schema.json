@@ -193,9 +193,9 @@
           "type": "string"
         },
         "signal": {
-          "description": "Directional contribution to the score: +1 (high), 0 (neutral), -1 (low).\n\n`i8` is the right primitive here — smallest signed integer. We'll add a validated newtype if we ever need to enforce the -1/0/+1 constraint at the type level, but that's premature for now.",
-          "format": "int8",
-          "type": "integer"
+          "description": "Directional contribution to the score: +1 (high), 0 (neutral), -1 (low).\n\nUsing `f64` here to support granular behavioral signals from MIIN NPCs while remaining compatible with standard register +/-1 signals.",
+          "format": "double",
+          "type": "number"
         },
         "weight": {
           "description": "Recency/strength weight. Convention: 0.3 isolated, 0.6 repeated, 0.9 sustained.",
@@ -427,6 +427,10 @@
       "anyOf": [
         {
           "type": "string"
+        },
+        {
+          "format": "double",
+          "type": "number"
         },
         {
           "$ref": "#/definitions/DomainEntry"

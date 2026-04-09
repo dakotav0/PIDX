@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use chrono::Utc;
 
-use crate::models::profile::ProfileDocument;
+use crate::models::profile::{ProfileDocument, ProfileWrapper};
+use crate::models::miin_profile::MiinProfileDocument;
 
 // ── ProfileStore ──────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ impl ProfileStore {
     /// Returns `Ok(None)` if the file does not exist. Any other I/O or parse
     /// error is returned as `Err` with the file path included in the message
     /// (via `anyhow::Context`).
-    pub fn load(&self, user_id: &str) -> Result<Option<ProfileDocument>> {
+    pub fn load(&self, user_id: &str) -> Result<Option<ProfileWrapper>> {
         let path = self.path_for(user_id);
         if !path.exists() {
             return Ok(None);
@@ -97,10 +98,17 @@ impl ProfileStore {
     /// The fresh profile is **not** written to disk — call `save()` explicitly
     /// when you're ready to persist it. This matches the Python pattern of
     /// creating the profile object in memory and only saving on confirmed changes.
-    pub fn load_or_create(&self, user_id: &str) -> Result<ProfileDocument> {
+    pub fn load_or_create(&self, user_id: &str) -> Result<ProfileWrapper> {
         match self.load(user_id)? {
             Some(doc) => Ok(doc),
-            None => Ok(ProfileDocument::new(user_id)),
+            None => {
+                let id = safe_id(user_id);
+                if id.starts_with("npc_") {
+                    Ok(ProfileWrapper::Npc(MiinProfileDocument::new(user_id)))
+                } else {
+                    Ok(ProfileWrapper::Human(ProfileDocument::new(user_id)))
+                }
+            }
         }
     }
 
@@ -109,8 +117,18 @@ impl ProfileStore {
     /// Refreshes `meta.updated` to the current UTC time before writing.
     /// Creates the profiles directory if it doesn't already exist.
     /// Output is pretty-printed JSON (2-space indent via serde_json).
-    pub fn save(&self, profile: &mut ProfileDocument) -> Result<()> {
-        profile.meta.updated = Utc::now().to_rfc3339();
+    pub fn save(&self, profile: &mut ProfileWrapper) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let (id, json) = match profile {
+            ProfileWrapper::Human(p) => {
+                p.meta.updated = now;
+                (&p.meta.id, serde_json::to_string_pretty(p).context("serializing profile to JSON")?)
+            }
+            ProfileWrapper::Npc(p) => {
+                p.meta.updated = now;
+                (&p.meta.id, serde_json::to_string_pretty(p).context("serializing profile to JSON")?)
+            }
+        };
 
         std::fs::create_dir_all(&self.profiles_dir).with_context(|| {
             format!(
@@ -119,9 +137,7 @@ impl ProfileStore {
             )
         })?;
 
-        let path = self.path_for(&profile.meta.id);
-        let json =
-            serde_json::to_string_pretty(profile).context("serializing profile to JSON")?;
+        let path = self.path_for(id);
 
         std::fs::write(&path, json)
             .with_context(|| format!("writing profile to {}", path.display()))?;

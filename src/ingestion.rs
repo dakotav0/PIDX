@@ -1,15 +1,15 @@
 use std::collections::HashMap;
-
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::models::bridge::{BridgeObservation, BridgeOrigination, BridgePacket};
 use crate::models::confidence::{Origination, CORROBORATION_BONUS};
 use crate::models::decay::FieldClass;
-use crate::models::evidence::{Evidence, RegisterMetricName};
+use crate::models::evidence::{Evidence, EvidenceType, RegisterMetricName};
 use crate::models::observation::{
     Observation, ObservationField, ObservationSource, ObservationStatus, ObservationValue,
 };
-use crate::models::profile::{BridgeLogEntry, DeltaItem, ProfileDocument, ProfileMeta, ReviewItem};
+use crate::models::profile::{BridgeLogEntry, DeltaItem, ProfileDocument, ProfileMeta, ProfileWrapper, ReviewItem};
 use crate::traits::IngestSource;
 
 // ── IngestSource for bridge observations ─────────────────────────────────────
@@ -188,6 +188,7 @@ fn route_field<'a>(
 fn parse_value(v: &serde_json::Value) -> Option<ObservationValue> {
     match v {
         serde_json::Value::String(s) => Some(ObservationValue::Text(s.clone())),
+        serde_json::Value::Number(n) => n.as_f64().map(ObservationValue::Number),
         serde_json::Value::Object(_) => {
             // Try to deserialize as DomainEntry. If the object lacks a "label"
             // key this will fail and we return None, skipping the observation.
@@ -301,6 +302,17 @@ fn ingest_evidence(
 ///
 /// Returns `(observations_proposed, deltas_flagged)`.
 pub fn ingest_bridge_packet(
+    wrapper: &mut ProfileWrapper,
+    packet: &BridgePacket,
+    filename: &str,
+) -> (usize, usize) {
+    match wrapper {
+        ProfileWrapper::Human(p) => ingest_human_bridge_packet(p, packet, filename),
+        ProfileWrapper::Npc(p) => ingest_npc_bridge_packet(p, packet, filename),
+    }
+}
+
+fn ingest_human_bridge_packet(
     profile: &mut ProfileDocument,
     packet: &BridgePacket,
     filename: &str,
@@ -416,6 +428,157 @@ pub fn ingest_bridge_packet(
     (proposed, deltas)
 }
 
+fn ingest_npc_bridge_packet(
+    profile: &mut crate::models::miin_profile::MiinProfileDocument,
+    packet: &BridgePacket,
+    filename: &str,
+) -> (usize, usize) {
+    let mut proposed = 0usize;
+    let deltas = 0usize;
+
+    for bo in &packet.observations {
+        let Some(obs_value) = parse_value(&bo.value) else { continue; };
+        
+        // Routing NPC fields
+        let routed = match bo.field.as_str() {
+            f if f.starts_with("stats.")      => route_npc_stat(profile, f, obs_value.clone(), bo, packet),
+            f if f.starts_with("alignment.")  => route_npc_alignment(profile, f, obs_value.clone(), bo, packet),
+            f if f.starts_with("class.")      => route_npc_class(profile, f, obs_value.clone(), bo, packet),
+            f if f.starts_with("behavior.")   => route_npc_behavior(profile, f, bo, packet),
+            _ => false,
+        };
+
+        if routed {
+            proposed += 1;
+        }
+    }
+
+    profile.bridge_log.processed.push(BridgeLogEntry {
+        filename: filename.to_string(),
+        ingested_at: Utc::now().to_rfc3339(),
+        observations_proposed: proposed as u32,
+        deltas_flagged: deltas as u32,
+    });
+
+    (proposed, deltas)
+}
+
+fn route_npc_stat(
+    profile: &mut crate::models::miin_profile::MiinProfileDocument,
+    field_path: &str,
+    value: ObservationValue,
+    bo: &BridgeObservation,
+    packet: &BridgePacket,
+) -> bool {
+    let field = match field_path {
+        "stats.str" => &mut profile.stats.str,
+        "stats.dex" => &mut profile.stats.dex,
+        "stats.con" => &mut profile.stats.con,
+        "stats.int" => &mut profile.stats.int,
+        "stats.wis" => &mut profile.stats.wis,
+        "stats.cha" => &mut profile.stats.cha,
+        _ => return false,
+    };
+    apply_observation(field, value, bo, packet)
+}
+
+fn route_npc_alignment(
+    profile: &mut crate::models::miin_profile::MiinProfileDocument,
+    field_path: &str,
+    value: ObservationValue,
+    bo: &BridgeObservation,
+    packet: &BridgePacket,
+) -> bool {
+    let field = match field_path {
+        "alignment.moral" => &mut profile.alignment.moral,
+        "alignment.order" => &mut profile.alignment.order,
+        _ => return false,
+    };
+    apply_observation(field, value, bo, packet)
+}
+
+fn route_npc_class(
+    profile: &mut crate::models::miin_profile::MiinProfileDocument,
+    field_path: &str,
+    value: ObservationValue,
+    bo: &BridgeObservation,
+    packet: &BridgePacket,
+) -> bool {
+    let field = match field_path {
+        "class.primary"   => &mut profile.class.primary,
+        "class.secondary" => &mut profile.class.secondary,
+        "class.level"     => &mut profile.class.level,
+        _ => return false,
+    };
+    apply_observation(field, value, bo, packet)
+}
+
+fn route_npc_behavior(
+    profile: &mut crate::models::miin_profile::MiinProfileDocument,
+    field_path: &str,
+    bo: &BridgeObservation,
+    packet: &BridgePacket,
+) -> bool {
+    let metric = match field_path {
+        "behavior.aggression"      => &mut profile.behavior.aggression,
+        "behavior.sociability"     => &mut profile.behavior.sociability,
+        "behavior.curiosity"       => &mut profile.behavior.curiosity,
+        "behavior.industriousness" => &mut profile.behavior.industriousness,
+        "behavior.caution"         => &mut profile.behavior.caution,
+        "behavior.loyalty"         => &mut profile.behavior.loyalty,
+        _ => return false,
+    };
+
+    // Behavior fields use Evidence pools (RegisterMetric), not ObservationFields
+    let signal = match &bo.value {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        _ => 0.0,
+    };
+
+    metric.evidence.push(Evidence {
+        observed_at: packet.timestamp.clone(),
+        session_ref: packet.session_ref.clone(),
+        orientation: packet.orientation.clone(),
+        evidence_type: EvidenceType::DirectAssertion, // Use DirectAssertion for stat-like signals
+        raw: bo.value.to_string(),
+        metric: RegisterMetricName::Affect, // Placeholder, behavior metrics are separate in NPC model
+        signal,
+        weight: 0.5,
+        decay_exempt: bo.origination == BridgeOrigination::Sync,
+    });
+    true
+}
+
+fn apply_observation(
+    field: &mut ObservationField,
+    value: ObservationValue,
+    bo: &BridgeObservation,
+    packet: &BridgePacket,
+) -> bool {
+    let source = ObservationSource {
+        origination: Origination::from(bo.origination),
+        orientation: packet.orientation.clone(),
+        session_ref: packet.session_ref.clone(),
+        timestamp: packet.timestamp.clone(),
+    };
+    let source_view = BridgeObsSource {
+        origination: bo.origination,
+        packet,
+    };
+    let confidence = source_view.base_confidence();
+
+    field.observations.push(Observation {
+        value,
+        source,
+        confidence,
+        weight: 1.0,
+        status: ObservationStatus::Proposed,
+        revision: 1,
+        decay_exempt: bo.origination == BridgeOrigination::Sync,
+    });
+    true
+}
+
 // ── Corroboration ─────────────────────────────────────────────────────────────
 
 /// Apply the corroboration confidence bonus across all confirmed observations.
@@ -425,7 +588,11 @@ pub fn ingest_bridge_packet(
 /// weight is set to 1.0. This rewards multi-source agreement.
 ///
 /// Returns the number of observations that received the bonus.
-pub fn run_corroboration(profile: &mut ProfileDocument) -> usize {
+pub fn run_corroboration(wrapper: &mut ProfileWrapper) -> usize {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => return 0,
+    };
     let mut boosted = 0;
 
     // corroborate_field takes a single &mut ObservationField — safe to call
@@ -518,6 +685,7 @@ fn corroborate_field(field: &mut ObservationField, boosted: &mut usize) {
 fn value_key(v: &ObservationValue) -> String {
     match v {
         ObservationValue::Text(s) => s.trim().to_lowercase(),
+        ObservationValue::Number(n) => n.to_string(),
         ObservationValue::Domain(d) => d.label.trim().to_lowercase(),
     }
 }
@@ -528,7 +696,11 @@ fn value_key(v: &ObservationValue) -> String {
 /// starts with `prefix`. Returns the paths that were actually modified.
 ///
 /// Used by both the CLI's `confirm-all` command and the Tauri `confirm_all` command.
-pub fn confirm_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<String> {
+pub fn confirm_all_proposed(wrapper: &mut ProfileWrapper, prefix: &str) -> Vec<String> {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => return vec![],
+    };
     // Immutable pass: collect paths of fields that have at least one Proposed obs.
     let matching: Vec<String> = {
         let mut v = Vec::new();
@@ -577,7 +749,11 @@ pub fn confirm_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<
 
 /// Flip every `Proposed` observation to `Rejected` in all fields whose path
 /// starts with `prefix`. Returns the paths that were actually modified.
-pub fn reject_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<String> {
+pub fn reject_all_proposed(wrapper: &mut ProfileWrapper, prefix: &str) -> Vec<String> {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => return vec![],
+    };
     let matching: Vec<String> = {
         let mut v = Vec::new();
         let mut push_if = |path: &str, field: &ObservationField| {
@@ -672,7 +848,11 @@ fn resolve_field_for_confirm<'a>(
 ///
 /// Typical threshold: `0.30`. Identity fields decay slowly (λ=0.0005), so they
 /// take years to reach 0.30. Signal fields (λ=0.0200) can reach it in weeks.
-pub fn run_decay_pass(profile: &mut ProfileDocument, threshold: f64) -> usize {
+pub fn run_decay_pass(wrapper: &mut ProfileWrapper, threshold: f64) -> usize {
+    let profile = match wrapper {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => return 0,
+    };
     use chrono::Utc;
     let now = Utc::now();
 

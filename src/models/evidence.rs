@@ -68,10 +68,9 @@ pub struct Evidence {
     pub metric: RegisterMetricName,
     /// Directional contribution to the score: +1 (high), 0 (neutral), -1 (low).
     ///
-    /// `i8` is the right primitive here — smallest signed integer. We'll add
-    /// a validated newtype if we ever need to enforce the -1/0/+1 constraint
-    /// at the type level, but that's premature for now.
-    pub signal: i8,
+    /// Using `f64` here to support granular behavioral signals from MIIN NPCs
+    /// while remaining compatible with standard register +/-1 signals.
+    pub signal: f64,
     /// Recency/strength weight. Convention: 0.3 isolated, 0.6 repeated, 0.9 sustained.
     pub weight: f64,
     /// When true, this evidence item contributes its full weight regardless of age.
@@ -128,7 +127,7 @@ impl RegisterMetric {
 
             let w = e.weight * decay;
             total_weight += w;
-            weighted_signal += e.signal as f64 * w;
+            weighted_signal += e.signal * w;
         }
 
         if total_weight == 0.0 {

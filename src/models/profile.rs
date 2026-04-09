@@ -24,6 +24,82 @@ fn default_author() -> String {
     "system".to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ProfileWrapper {
+    Npc(crate::models::miin_profile::MiinProfileDocument),
+    Human(ProfileDocument),
+}
+
+impl ProfileWrapper {
+    pub fn meta(&self) -> &ProfileMeta {
+        match self {
+            Self::Human(p) => &p.meta,
+            Self::Npc(p) => &p.meta,
+        }
+    }
+    pub fn meta_mut(&mut self) -> &mut ProfileMeta {
+        match self {
+            Self::Human(p) => &mut p.meta,
+            Self::Npc(p) => &mut p.meta,
+        }
+    }
+    pub fn delta_queue(&self) -> &[DeltaItem] {
+        match self {
+            Self::Human(p) => &p.delta_queue,
+            Self::Npc(p) => &p.delta_queue,
+        }
+    }
+    pub fn delta_queue_mut(&mut self) -> &mut Vec<DeltaItem> {
+        match self {
+            Self::Human(p) => &mut p.delta_queue,
+            Self::Npc(p) => &mut p.delta_queue,
+        }
+    }
+    pub fn review_queue(&self) -> &[ReviewItem] {
+        match self {
+            Self::Human(p) => &p.review_queue,
+            Self::Npc(p) => &p.review_queue,
+        }
+    }
+    pub fn review_queue_mut(&mut self) -> &mut Vec<ReviewItem> {
+        match self {
+            Self::Human(p) => &mut p.review_queue,
+            Self::Npc(p) => &mut p.review_queue,
+        }
+    }
+    pub fn bridge_log(&self) -> &BridgeLog {
+        match self {
+            Self::Human(p) => &p.bridge_log,
+            Self::Npc(p) => &p.bridge_log,
+        }
+    }
+    pub fn bridge_log_mut(&mut self) -> &mut BridgeLog {
+        match self {
+            Self::Human(p) => &mut p.bridge_log,
+            Self::Npc(p) => &mut p.bridge_log,
+        }
+    }
+    pub fn annotations(&self) -> &[Annotation] {
+        match self {
+            Self::Human(p) => &p.annotations,
+            Self::Npc(p) => &p.annotations,
+        }
+    }
+    pub fn annotations_mut(&mut self) -> &mut Vec<Annotation> {
+        match self {
+            Self::Human(p) => &mut p.annotations,
+            Self::Npc(p) => &mut p.annotations,
+        }
+    }
+    pub fn recompute_overall_confidence(&mut self) {
+        match self {
+            Self::Human(p) => p.recompute_overall_confidence(),
+            Self::Npc(p) => p.recompute_overall_confidence(),
+        }
+    }
+}
+
 // ── CleanupPolicy ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

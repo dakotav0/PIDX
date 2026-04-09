@@ -88,6 +88,7 @@ fn default_domain_weight() -> f64 {
 #[serde(untagged)]
 pub enum ObservationValue {
     Text(String),
+    Number(f64),
     Domain(DomainEntry),
 }
 
@@ -225,6 +226,18 @@ impl ObservationField {
         } else {
             None
         }
+    }
+
+    /// Returns the maximum effective confidence among confirmed observations.
+    pub fn overall_confidence(&self) -> f64 {
+        // Since we don't know the field class here, we'll assume Identity (0.0005) 
+        // as a stable baseline for confidence reporting, or just use the base confidence.
+        // The Python engine uses the max base confidence for this metric.
+        self.observations
+            .iter()
+            .filter(|o| o.status == ObservationStatus::Confirmed)
+            .map(|o| o.confidence)
+            .fold(0.0, f64::max)
     }
 }
 
