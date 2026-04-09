@@ -41,7 +41,7 @@ impl BridgeOrigination {
         let s = String::deserialize(d).unwrap_or_default();
         Ok(match s.as_str() {
             "sync" => BridgeOrigination::Sync,
-            _      => BridgeOrigination::Passive,
+            _ => BridgeOrigination::Passive,
         })
     }
 }
@@ -50,7 +50,7 @@ impl From<BridgeOrigination> for Origination {
     fn from(b: BridgeOrigination) -> Origination {
         match b {
             BridgeOrigination::Passive => Origination::Passive,
-            BridgeOrigination::Sync    => Origination::Sync,
+            BridgeOrigination::Sync => Origination::Sync,
         }
     }
 }

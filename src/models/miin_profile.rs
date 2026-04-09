@@ -174,7 +174,7 @@ impl MiinProfileDocument {
     }
 
     pub fn recompute_derived_behaviors(&mut self) {
-        // This is a logic placeholder. In a more complex version, 
+        // This is a logic placeholder. In a more complex version,
         // we might cache the derived results or check for drift here.
         self.recompute_overall_confidence();
     }
@@ -275,9 +275,15 @@ impl MiinProfileDocument {
     pub fn effective_behavior(&self, metric: &str, as_of: Option<chrono::DateTime<Utc>>) -> f64 {
         let (derived, evs) = match metric {
             "aggression" => (self.derive_aggression(), &self.behavior.aggression.evidence),
-            "sociability" => (self.derive_sociability(), &self.behavior.sociability.evidence),
+            "sociability" => (
+                self.derive_sociability(),
+                &self.behavior.sociability.evidence,
+            ),
             "curiosity" => (self.derive_curiosity(), &self.behavior.curiosity.evidence),
-            "industriousness" => (self.derive_industriousness(), &self.behavior.industriousness.evidence),
+            "industriousness" => (
+                self.derive_industriousness(),
+                &self.behavior.industriousness.evidence,
+            ),
             "caution" => (self.derive_caution(), &self.behavior.caution.evidence),
             "loyalty" => (self.derive_loyalty(), &self.behavior.loyalty.evidence),
             _ => return 0.0,

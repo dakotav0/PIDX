@@ -7,24 +7,24 @@ pub mod bridge;
 pub mod confidence;
 pub mod decay;
 pub mod evidence;
+pub mod miin_profile;
 pub mod observation;
 pub mod profile;
-pub mod miin_profile;
 
 // Flatten the most-used types to `crate::models::Foo` so callers don't need
 // to know which submodule each type lives in.
 pub use confidence::{get_base_confidence, Origination, CORROBORATION_BONUS};
 pub use decay::{decay_factor, FieldClass};
 pub use evidence::{Evidence, EvidenceType, RegisterMetric, RegisterMetricName};
+pub use miin_profile::{
+    Alignment, MemoryRegister, MiinProfileDocument, NpcBehavior, NpcClass, NpcIdentity, NpcWorking,
+    StatBlock, WorldbookRef,
+};
 pub use observation::{
     DomainEntry, Observation, ObservationField, ObservationSource, ObservationStatus,
     ObservationValue,
 };
 pub use profile::{
-    Annotation, BridgeLog, BridgeLogEntry, CleanupPolicy, DeltaItem, Identity,
-    IdentityReasoning, ProfileDocument, ProfileMeta, Register, ReviewItem, Signals, Working,
-};
-pub use miin_profile::{
-    StatBlock, Alignment, NpcClass, NpcIdentity, NpcBehavior, WorldbookRef,
-    NpcWorking, MemoryRegister, MiinProfileDocument
+    Annotation, BridgeLog, BridgeLogEntry, CleanupPolicy, DeltaItem, Identity, IdentityReasoning,
+    ProfileDocument, ProfileMeta, Register, ReviewItem, Signals, Working,
 };

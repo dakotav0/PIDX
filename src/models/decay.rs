@@ -45,20 +45,20 @@ impl FieldClass {
     /// will tell you to handle it here before you can ship.
     pub fn lambda(self) -> f64 {
         match self {
-            FieldClass::Identity   => 0.0005,
-            FieldClass::Value      => 0.0008,
-            FieldClass::Register   => 0.0100,
-            FieldClass::Domain     => 0.0080,
-            FieldClass::Working    => 0.0070,
-            FieldClass::Signal     => 0.0200,
+            FieldClass::Identity => 0.0005,
+            FieldClass::Value => 0.0008,
+            FieldClass::Register => 0.0100,
+            FieldClass::Domain => 0.0080,
+            FieldClass::Working => 0.0070,
+            FieldClass::Signal => 0.0200,
             FieldClass::Annotation => 0.0,
-            FieldClass::NpcStat    => 0.0002,
+            FieldClass::NpcStat => 0.0002,
             FieldClass::NpcIdentity => 0.0010,
             FieldClass::NpcBehavior => 0.0150,
-            FieldClass::NpcSkill    => 0.0200,
-            FieldClass::NpcSocial   => 0.0120,
-            FieldClass::NpcMemory   => 0.0500,
-            FieldClass::NpcWorking  => 0.0100,
+            FieldClass::NpcSkill => 0.0200,
+            FieldClass::NpcSocial => 0.0120,
+            FieldClass::NpcMemory => 0.0500,
+            FieldClass::NpcWorking => 0.0100,
         }
     }
 }

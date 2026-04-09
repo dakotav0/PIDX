@@ -43,21 +43,18 @@ pub const CORROBORATION_BONUS: f64 = 0.08;
 /// | System      | algorithmic       | 0.45       |
 pub fn get_base_confidence(origination: Origination, orientation: &str) -> f64 {
     // Extract the family prefix: "claude.sonnet-4-6" → "claude", "local:gemma3:4b" → "local"
-    let prefix = orientation
-        .split(['.', ':'])
-        .next()
-        .unwrap_or(orientation);
+    let prefix = orientation.split(['.', ':']).next().unwrap_or(orientation);
 
     // Rust's match on a tuple is exhaustive — every (Origination, prefix) combination
     // not listed here falls through to the wildcard arm. The compiler guarantees we
     // can't accidentally miss a case we explicitly listed.
     match (origination, prefix) {
-        (Origination::User,   "user")        => 1.00,
-        (Origination::Active, "claude")      => 0.91,
-        (Origination::Passive, "claude")     => 0.78,
-        (Origination::Passive, "local")      => 0.61,
-        (Origination::Sync,   "local")       => 0.55,
+        (Origination::User, "user") => 1.00,
+        (Origination::Active, "claude") => 0.91,
+        (Origination::Passive, "claude") => 0.78,
+        (Origination::Passive, "local") => 0.61,
+        (Origination::Sync, "local") => 0.55,
         (Origination::System, "algorithmic") => 0.45,
-        _                                    => 0.45,
+        _ => 0.45,
     }
 }

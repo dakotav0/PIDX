@@ -34,7 +34,7 @@ fn main() {
     let schema = schemars::schema_for!(pidx::models::profile::ProfileWrapper);
     let mut val = serde_json::to_value(&schema).unwrap();
     scrub_timestamps(&mut val);
-    
+
     let s = serde_json::to_string_pretty(&val).expect("schema serialization failed");
     if std::env::args().any(|a| a == "--write") {
         std::fs::write("docs/pidx-schema.json", s + "\n").expect("failed to write file");

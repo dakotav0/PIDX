@@ -438,7 +438,12 @@ impl ProfileDocument {
         collect(&self.domains, FieldClass::Domain, now, &mut scores);
         collect(&self.values, FieldClass::Value, now, &mut scores);
         collect(&self.signals.phrases, FieldClass::Signal, now, &mut scores);
-        collect(&self.signals.avoidances, FieldClass::Signal, now, &mut scores);
+        collect(
+            &self.signals.avoidances,
+            FieldClass::Signal,
+            now,
+            &mut scores,
+        );
         collect(&self.signals.rhythms, FieldClass::Signal, now, &mut scores);
 
         for field in [

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use chrono::Utc;
 
-use crate::models::profile::{ProfileDocument, ProfileWrapper};
 use crate::models::miin_profile::MiinProfileDocument;
+use crate::models::profile::{ProfileDocument, ProfileWrapper};
 
 // ── ProfileStore ──────────────────────────────────────────────────────────────
 
@@ -104,9 +104,13 @@ impl ProfileStore {
             None => {
                 let id = safe_id(user_id);
                 if id.starts_with("npc_") {
-                    Ok(ProfileWrapper::Npc(Box::new(MiinProfileDocument::new(user_id))))
+                    Ok(ProfileWrapper::Npc(Box::new(MiinProfileDocument::new(
+                        user_id,
+                    ))))
                 } else {
-                    Ok(ProfileWrapper::Human(Box::new(ProfileDocument::new(user_id))))
+                    Ok(ProfileWrapper::Human(Box::new(ProfileDocument::new(
+                        user_id,
+                    ))))
                 }
             }
         }
@@ -122,11 +126,17 @@ impl ProfileStore {
         let (id, json) = match profile {
             ProfileWrapper::Human(p) => {
                 p.meta.updated = now;
-                (&p.meta.id, serde_json::to_string_pretty(p).context("serializing profile to JSON")?)
+                (
+                    &p.meta.id,
+                    serde_json::to_string_pretty(p).context("serializing profile to JSON")?,
+                )
             }
             ProfileWrapper::Npc(p) => {
                 p.meta.updated = now;
-                (&p.meta.id, serde_json::to_string_pretty(p).context("serializing profile to JSON")?)
+                (
+                    &p.meta.id,
+                    serde_json::to_string_pretty(p).context("serializing profile to JSON")?,
+                )
             }
         };
 

@@ -135,7 +135,7 @@ impl RegisterMetric {
         }
 
         let raw = weighted_signal / total_weight; // [-1.0, 1.0]
-        // Round to 2 decimal places, matching Python's round(..., 2)
+                                                  // Round to 2 decimal places, matching Python's round(..., 2)
         (((raw + 1.0) * 5.0) * 100.0).round() / 100.0
     }
 

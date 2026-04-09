@@ -140,19 +140,17 @@ impl Observation {
         // Rust writes RFC 3339 with an offset ("2026-04-07T06:45:37+00:00");
         // Python writes naive ISO 8601 ("2026-04-07T06:45:37.123456").
         // Try RFC 3339 first so Rust-generated timestamps decay correctly.
-        let obs_time: DateTime<Utc> = if let Ok(dt) =
-            DateTime::parse_from_rfc3339(&self.source.timestamp)
-        {
-            dt.with_timezone(&Utc)
-        } else if let Ok(naive) = NaiveDateTime::parse_from_str(
-            &self.source.timestamp,
-            "%Y-%m-%dT%H:%M:%S%.f",
-        ) {
-            naive.and_utc()
-        } else {
-            // Unrecognised format — return base confidence, don't decay.
-            return self.confidence;
-        };
+        let obs_time: DateTime<Utc> =
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&self.source.timestamp) {
+                dt.with_timezone(&Utc)
+            } else if let Ok(naive) =
+                NaiveDateTime::parse_from_str(&self.source.timestamp, "%Y-%m-%dT%H:%M:%S%.f")
+            {
+                naive.and_utc()
+            } else {
+                // Unrecognised format — return base confidence, don't decay.
+                return self.confidence;
+            };
 
         let days = (as_of - obs_time).num_seconds() as f64 / 86400.0;
         let lam = field_class.lambda();
@@ -178,8 +176,12 @@ pub struct ObservationField {
     pub proposal_count: u32,
 }
 
-fn default_proposal_count() -> u32 { 1 }
-fn is_one(n: &u32) -> bool { *n == 1 }
+fn default_proposal_count() -> u32 {
+    1
+}
+fn is_one(n: &u32) -> bool {
+    *n == 1
+}
 
 impl ObservationField {
     /// The current active value: the confirmed observation with the highest
@@ -230,7 +232,7 @@ impl ObservationField {
 
     /// Returns the maximum effective confidence among confirmed observations.
     pub fn overall_confidence(&self) -> f64 {
-        // Since we don't know the field class here, we'll assume Identity (0.0005) 
+        // Since we don't know the field class here, we'll assume Identity (0.0005)
         // as a stable baseline for confidence reporting, or just use the base confidence.
         // The Python engine uses the max base confidence for this metric.
         self.observations
@@ -246,10 +248,7 @@ impl ObservationField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{
-        confidence::Origination,
-        decay::FieldClass,
-    };
+    use crate::models::{confidence::Origination, decay::FieldClass};
 
     fn make_obs(timestamp: &str) -> Observation {
         Observation {
@@ -291,7 +290,10 @@ mod tests {
         let obs = make_obs(&ts);
 
         let eff = obs.effective_confidence(FieldClass::Signal, None);
-        assert!(eff < 0.01, "Naive ISO 8601 timestamp should decay: got {eff}");
+        assert!(
+            eff < 0.01,
+            "Naive ISO 8601 timestamp should decay: got {eff}"
+        );
     }
 
     /// decay_exempt observations always return base confidence, regardless of timestamp.
