@@ -104,9 +104,9 @@ impl ProfileStore {
             None => {
                 let id = safe_id(user_id);
                 if id.starts_with("npc_") {
-                    Ok(ProfileWrapper::Npc(MiinProfileDocument::new(user_id)))
+                    Ok(ProfileWrapper::Npc(Box::new(MiinProfileDocument::new(user_id))))
                 } else {
-                    Ok(ProfileWrapper::Human(ProfileDocument::new(user_id)))
+                    Ok(ProfileWrapper::Human(Box::new(ProfileDocument::new(user_id))))
                 }
             }
         }

@@ -946,16 +946,17 @@ mod tests {
 
     #[test]
     fn ingest_text_to_identity_core() {
-        let mut profile = ProfileDocument::new("test");
+        let mut wrapper = ProfileWrapper::Human(Box::new(ProfileDocument::new("test")));
         let packet = single_obs_packet("identity.core", json!("curious"));
 
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, "test.bridge.json");
+        let (proposed, deltas) = ingest_bridge_packet(&mut wrapper, &packet, "test.bridge.json");
 
+        let p = match &wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
         assert_eq!(proposed, 1);
         assert_eq!(deltas, 0);
-        assert_eq!(profile.identity.core.len(), 1);
+        assert_eq!(p.identity.core.len(), 1);
 
-        let obs = &profile.identity.core[0].observations[0];
+        let obs = &p.identity.core[0].observations[0];
         assert_eq!(obs.status, ObservationStatus::Proposed);
         // Local passive × "local:..." prefix → 0.61
         assert!((obs.confidence - 0.61).abs() < f64::EPSILON);
@@ -963,79 +964,74 @@ mod tests {
 
     #[test]
     fn ingest_to_working_field() {
-        let mut profile = ProfileDocument::new("test");
+        let mut wrapper = ProfileWrapper::Human(Box::new(ProfileDocument::new("test")));
         let packet = single_obs_packet("working.mode", json!("sketch-first"));
 
-        let (proposed, _) = ingest_bridge_packet(&mut profile, &packet, "");
+        let (proposed, _) = ingest_bridge_packet(&mut wrapper, &packet, "");
         assert_eq!(proposed, 1);
 
-        let obs = &profile.working.mode.observations[0];
+        let p = match &wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
+        let obs = &p.working.mode.observations[0];
         assert_eq!(obs.status, ObservationStatus::Proposed);
     }
 
     #[test]
     fn delta_detected_on_conflict() {
-        // Delta detection requires a SINGLETON field — one that route_field returns
-        // by mutable reference rather than creating a new slot. "working.mode" is a
-        // singleton: both packets land in the same ObservationField, so the second
-        // can see the confirmed first and detect the conflict.
-        //
-        // List fields (identity.core, values, domains, signals.*) always create a
-        // new slot per observation — they represent independent items, not alternative
-        // values for the same trait, so they can never conflict.
-        let mut profile = ProfileDocument::new("test");
+        let mut wrapper = ProfileWrapper::Human(Box::new(ProfileDocument::new("test")));
 
         // First packet: "sketch-first" proposed, then manually confirm it.
         let p1 = single_obs_packet("working.mode", json!("sketch-first"));
-        ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
-        profile.working.mode.observations[0].status = ObservationStatus::Confirmed;
+        ingest_bridge_packet(&mut wrapper, &p1, "p1.bridge.json");
+        
+        {
+            let p = match &mut wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
+            p.working.mode.observations[0].status = ObservationStatus::Confirmed;
+        }
 
         // Second packet: "spec-first" — conflicts with confirmed "sketch-first".
         let p2 = single_obs_packet("working.mode", json!("spec-first"));
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &p2, "p2.bridge.json");
+        let (proposed, deltas) = ingest_bridge_packet(&mut wrapper, &p2, "p2.bridge.json");
 
         assert_eq!(proposed, 0);
         assert_eq!(deltas, 1);
-        assert_eq!(profile.delta_queue.len(), 1);
+        
+        let p = match &wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
+        assert_eq!(p.delta_queue.len(), 1);
 
         // Both observations are now in delta status.
-        let obs = &profile.working.mode.observations;
+        let obs = &p.working.mode.observations;
         assert!(obs.iter().all(|o| o.status == ObservationStatus::Delta));
     }
 
     #[test]
     fn unknown_path_is_skipped() {
-        let mut profile = ProfileDocument::new("test");
+        let mut wrapper = ProfileWrapper::Human(Box::new(ProfileDocument::new("test")));
         let packet = single_obs_packet("nonexistent.path", json!("value"));
 
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, "");
+        let (proposed, deltas) = ingest_bridge_packet(&mut wrapper, &packet, "");
         assert_eq!(proposed, 0);
         assert_eq!(deltas, 0);
     }
 
     #[test]
     fn bridge_log_entry_appended() {
-        let mut profile = ProfileDocument::new("test");
+        let mut wrapper = ProfileWrapper::Human(Box::new(ProfileDocument::new("test")));
         let packet = single_obs_packet("values", json!("open source"));
 
-        ingest_bridge_packet(&mut profile, &packet, "session1.bridge.json");
+        ingest_bridge_packet(&mut wrapper, &packet, "session1.bridge.json");
 
-        assert_eq!(profile.bridge_log.processed.len(), 1);
+        let p = match &wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
+        assert_eq!(p.bridge_log.processed.len(), 1);
         assert_eq!(
-            profile.bridge_log.processed[0].filename,
+            p.bridge_log.processed[0].filename,
             "session1.bridge.json"
         );
-        assert_eq!(profile.bridge_log.processed[0].observations_proposed, 1);
+        assert_eq!(p.bridge_log.processed[0].observations_proposed, 1);
     }
 
     #[test]
     fn corroboration_bonus_applied() {
-        // Corroboration requires two observations with the SAME VALUE from DIFFERENT
-        // orientations in the SAME ObservationField. We use "identity.reasoning.style"
-        // — a singleton field — so both packets land in the same field. List paths
-        // (values, domains, etc.) create a new slot per packet, so their observations
-        // end up in separate fields and can't corroborate each other.
-        let mut profile = ProfileDocument::new("test");
+        let mut wrapper = ProfileWrapper::Human(Box::new(ProfileDocument::new("test")));
 
         let make_packet = |orientation: &str, session: &str| BridgePacket {
             bridge_version: "0.1".to_string(),
@@ -1050,19 +1046,23 @@ mod tests {
             }],
         };
 
-        ingest_bridge_packet(&mut profile, &make_packet("local:gemma3:4b", "s1"), "s1.bridge.json");
-        ingest_bridge_packet(&mut profile, &make_packet("local:llama3:8b", "s2"), "s2.bridge.json");
+        ingest_bridge_packet(&mut wrapper, &make_packet("local:gemma3:4b", "s1"), "s1.bridge.json");
+        ingest_bridge_packet(&mut wrapper, &make_packet("local:llama3:8b", "s2"), "s2.bridge.json");
 
-        // Manually confirm both (simulating user review pass).
-        for obs in &mut profile.identity.reasoning.style.observations {
-            obs.status = ObservationStatus::Confirmed;
+        {
+            let p = match &mut wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
+            // Manually confirm both (simulating user review pass).
+            for obs in &mut p.identity.reasoning.style.observations {
+                obs.status = ObservationStatus::Confirmed;
+            }
         }
 
-        let boosted = run_corroboration(&mut profile);
+        let boosted = run_corroboration(&mut wrapper);
         assert_eq!(boosted, 2);
 
+        let p = match &wrapper { ProfileWrapper::Human(p) => p, _ => unreachable!() };
         // Each should have gained +0.08 on top of its base 0.61.
-        for obs in &profile.identity.reasoning.style.observations {
+        for obs in &p.identity.reasoning.style.observations {
             assert!((obs.confidence - (0.61 + CORROBORATION_BONUS)).abs() < 1e-9);
         }
     }
