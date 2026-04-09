@@ -1,6 +1,33 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "Alignment": {
+      "properties": {
+        "moral": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "order": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    },
     "Annotation": {
       "description": "A user or system note attached to a specific profile field.\n\nAnnotations never decay. Pinned annotations appear in Rich-tier output.",
       "properties": {
@@ -320,6 +347,450 @@
       },
       "type": "object"
     },
+    "MemoryRegister": {
+      "properties": {
+        "core": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "recent": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "MiinProfileDocument": {
+      "properties": {
+        "alignment": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Alignment"
+            }
+          ],
+          "default": {
+            "moral": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "order": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        },
+        "annotations": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/Annotation"
+          },
+          "type": "array"
+        },
+        "behavior": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/NpcBehavior"
+            }
+          ],
+          "default": {
+            "aggression": {
+              "evidence": []
+            },
+            "caution": {
+              "evidence": []
+            },
+            "curiosity": {
+              "evidence": []
+            },
+            "industriousness": {
+              "evidence": []
+            },
+            "loyalty": {
+              "evidence": []
+            },
+            "sociability": {
+              "evidence": []
+            }
+          }
+        },
+        "bridge_log": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BridgeLog"
+            }
+          ],
+          "default": {
+            "pending_filenames": [],
+            "processed": []
+          }
+        },
+        "class": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/NpcClass"
+            }
+          ],
+          "default": {
+            "level": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "primary": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "secondary": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        },
+        "delta_queue": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/DeltaItem"
+          },
+          "type": "array"
+        },
+        "identity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/NpcIdentity"
+            }
+          ],
+          "default": {
+            "archetype": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "core": [],
+            "stance": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "sub_archetype": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        },
+        "memories": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MemoryRegister"
+            }
+          ],
+          "default": {
+            "core": [],
+            "recent": []
+          }
+        },
+        "meta": {
+          "$ref": "#/definitions/ProfileMeta"
+        },
+        "profile_type": {
+          "default": "miin",
+          "type": "string"
+        },
+        "review_queue": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ReviewItem"
+          },
+          "type": "array"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "social": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "stats": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/StatBlock"
+            }
+          ],
+          "default": {
+            "cha": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "con": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "dex": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "int": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "str": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "wis": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        },
+        "working": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/NpcWorking"
+            }
+          ],
+          "default": {
+            "active_period": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "engagement": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "quest_affinity": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "range": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        },
+        "worldbook": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WorldbookRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "meta"
+      ],
+      "type": "object"
+    },
+    "NpcBehavior": {
+      "properties": {
+        "aggression": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "caution": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "curiosity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "industriousness": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "loyalty": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        },
+        "sociability": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegisterMetric"
+            }
+          ],
+          "default": {
+            "evidence": []
+          }
+        }
+      },
+      "type": "object"
+    },
+    "NpcClass": {
+      "properties": {
+        "level": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "primary": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "secondary": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    },
+    "NpcIdentity": {
+      "properties": {
+        "archetype": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "core": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "stance": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "sub_archetype": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    },
+    "NpcWorking": {
+      "properties": {
+        "active_period": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "engagement": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "quest_affinity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "range": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    },
     "Observation": {
       "description": "An atomic unit of profile data with full provenance.\n\nEvery field in a profile is built from one or more of these. The confidence is never just a number — it degrades over time based on the field class.",
       "properties": {
@@ -477,6 +948,158 @@
           "type": "string"
         }
       ]
+    },
+    "ProfileDocument": {
+      "description": "The complete PIDX profile for one user.\n\nThis is the root struct that serializes to/from `{user_id}.pidx.json`. All sub-fields default to empty so a profile with only `meta` populated deserializes cleanly.",
+      "properties": {
+        "annotations": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/Annotation"
+          },
+          "type": "array"
+        },
+        "bridge_log": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/BridgeLog"
+            }
+          ],
+          "default": {
+            "pending_filenames": [],
+            "processed": []
+          }
+        },
+        "comm": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Register"
+            }
+          ],
+          "default": {
+            "abstraction": {
+              "evidence": []
+            },
+            "affect": {
+              "evidence": []
+            },
+            "directness": {
+              "evidence": []
+            },
+            "formality": {
+              "evidence": []
+            },
+            "hedging": {
+              "evidence": []
+            },
+            "humor": {
+              "evidence": []
+            }
+          },
+          "description": "Communication register. JSON key is `\"comm\"` — the Python attribute name, not its Pydantic alias (`\"register\"`). Both names exist in Python but `model_dump_json()` writes the attribute name, so saved files use `\"comm\"`."
+        },
+        "delta_queue": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/DeltaItem"
+          },
+          "type": "array"
+        },
+        "domains": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "identity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Identity"
+            }
+          ],
+          "default": {
+            "core": [],
+            "reasoning": {
+              "intake": {
+                "observations": [],
+                "proposal_count": 0
+              },
+              "pattern": {
+                "observations": [],
+                "proposal_count": 0
+              },
+              "stance": {
+                "observations": [],
+                "proposal_count": 0
+              },
+              "style": {
+                "observations": [],
+                "proposal_count": 0
+              }
+            }
+          }
+        },
+        "meta": {
+          "$ref": "#/definitions/ProfileMeta"
+        },
+        "review_queue": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ReviewItem"
+          },
+          "type": "array"
+        },
+        "signals": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Signals"
+            }
+          ],
+          "default": {
+            "avoidances": [],
+            "framings": [],
+            "phrases": [],
+            "rhythms": []
+          }
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ObservationField"
+          },
+          "type": "array"
+        },
+        "working": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Working"
+            }
+          ],
+          "default": {
+            "feedback": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "mode": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "pace": {
+              "observations": [],
+              "proposal_count": 0
+            },
+            "pattern": {
+              "observations": [],
+              "proposal_count": 0
+            }
+          }
+        }
+      },
+      "required": [
+        "meta"
+      ],
+      "type": "object"
     },
     "ProfileMeta": {
       "properties": {
@@ -697,6 +1320,77 @@
       },
       "type": "object"
     },
+    "StatBlock": {
+      "properties": {
+        "cha": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "con": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "dex": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "int": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "str": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        },
+        "wis": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ObservationField"
+            }
+          ],
+          "default": {
+            "observations": [],
+            "proposal_count": 0
+          }
+        }
+      },
+      "type": "object"
+    },
     "Working": {
       "properties": {
         "feedback": {
@@ -745,157 +1439,59 @@
         }
       },
       "type": "object"
+    },
+    "WorldbookRef": {
+      "properties": {
+        "lore_injected": {
+          "default": false,
+          "type": "boolean"
+        },
+        "setting_tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "worldbook_id": {
+          "type": "string"
+        },
+        "worldbook_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "worldbook_id",
+        "worldbook_path"
+      ],
+      "type": "object"
     }
   },
-  "description": "The complete PIDX profile for one user.\n\nThis is the root struct that serializes to/from `{user_id}.pidx.json`. All sub-fields default to empty so a profile with only `meta` populated deserializes cleanly.",
-  "properties": {
-    "annotations": {
-      "default": [],
-      "items": {
-        "$ref": "#/definitions/Annotation"
-      },
-      "type": "array"
-    },
-    "bridge_log": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/BridgeLog"
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "npc": {
+          "$ref": "#/definitions/MiinProfileDocument"
         }
+      },
+      "required": [
+        "npc"
       ],
-      "default": {
-        "pending_filenames": [],
-        "processed": []
-      }
+      "type": "object"
     },
-    "comm": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Register"
+    {
+      "additionalProperties": false,
+      "properties": {
+        "human": {
+          "$ref": "#/definitions/ProfileDocument"
         }
+      },
+      "required": [
+        "human"
       ],
-      "default": {
-        "abstraction": {
-          "evidence": []
-        },
-        "affect": {
-          "evidence": []
-        },
-        "directness": {
-          "evidence": []
-        },
-        "formality": {
-          "evidence": []
-        },
-        "hedging": {
-          "evidence": []
-        },
-        "humor": {
-          "evidence": []
-        }
-      },
-      "description": "Communication register. JSON key is `\"comm\"` — the Python attribute name, not its Pydantic alias (`\"register\"`). Both names exist in Python but `model_dump_json()` writes the attribute name, so saved files use `\"comm\"`."
-    },
-    "delta_queue": {
-      "default": [],
-      "items": {
-        "$ref": "#/definitions/DeltaItem"
-      },
-      "type": "array"
-    },
-    "domains": {
-      "default": [],
-      "items": {
-        "$ref": "#/definitions/ObservationField"
-      },
-      "type": "array"
-    },
-    "identity": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Identity"
-        }
-      ],
-      "default": {
-        "core": [],
-        "reasoning": {
-          "intake": {
-            "observations": [],
-            "proposal_count": 0
-          },
-          "pattern": {
-            "observations": [],
-            "proposal_count": 0
-          },
-          "stance": {
-            "observations": [],
-            "proposal_count": 0
-          },
-          "style": {
-            "observations": [],
-            "proposal_count": 0
-          }
-        }
-      }
-    },
-    "meta": {
-      "$ref": "#/definitions/ProfileMeta"
-    },
-    "review_queue": {
-      "default": [],
-      "items": {
-        "$ref": "#/definitions/ReviewItem"
-      },
-      "type": "array"
-    },
-    "signals": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Signals"
-        }
-      ],
-      "default": {
-        "avoidances": [],
-        "framings": [],
-        "phrases": [],
-        "rhythms": []
-      }
-    },
-    "values": {
-      "default": [],
-      "items": {
-        "$ref": "#/definitions/ObservationField"
-      },
-      "type": "array"
-    },
-    "working": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/Working"
-        }
-      ],
-      "default": {
-        "feedback": {
-          "observations": [],
-          "proposal_count": 0
-        },
-        "mode": {
-          "observations": [],
-          "proposal_count": 0
-        },
-        "pace": {
-          "observations": [],
-          "proposal_count": 0
-        },
-        "pattern": {
-          "observations": [],
-          "proposal_count": 0
-        }
-      }
+      "type": "object"
     }
-  },
-  "required": [
-    "meta"
   ],
-  "title": "ProfileDocument",
-  "type": "object"
+  "title": "ProfileWrapper"
 }

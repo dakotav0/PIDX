@@ -17,6 +17,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+      
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Audit dependencies
+        uses: actions-rust-lang/audit@v1
 
       - name: Build (excluding Tauri UI and MCP)
         run: cargo build --workspace --exclude pidx-ui --exclude pidx-mcp

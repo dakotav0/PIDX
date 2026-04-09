@@ -31,7 +31,7 @@ fn scrub_timestamps(val: &mut serde_json::Value) {
 }
 
 fn main() {
-    let schema = schemars::schema_for!(pidx::models::profile::ProfileDocument);
+    let schema = schemars::schema_for!(pidx::models::profile::ProfileWrapper);
     let mut val = serde_json::to_value(&schema).unwrap();
     scrub_timestamps(&mut val);
     

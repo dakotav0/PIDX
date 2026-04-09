@@ -25,7 +25,7 @@ fn default_author() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum ProfileWrapper {
     Npc(Box<crate::models::miin_profile::MiinProfileDocument>),
     Human(Box<ProfileDocument>),
