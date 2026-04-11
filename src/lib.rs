@@ -38,6 +38,6 @@ pub use ingestion::{
     confirm_all_proposed, ingest_bridge_packet, reject_all_proposed, run_corroboration,
     run_decay_pass,
 };
-pub use models::profile::ProfileDocument;
+pub use models::profile::{ProfileDocument, ProfileWrapper};
 pub use output::{render_tier_output, Tier};
 pub use storage::ProfileStore;

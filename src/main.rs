@@ -153,8 +153,13 @@ struct AnnotationJson {
 ///
 /// Tier determines which fields are populated; empty collections are omitted
 /// from the serialized JSON via `skip_serializing_if`.
+///
+/// For NPC profiles (profile_type = "npc"), the `behaviors` map is populated
+/// with derived + effective scores; human fields (register, domains, etc.) are
+/// empty. For human profiles (profile_type = "human"), behaviors is empty.
 #[derive(Serialize)]
 struct ShowJson {
+    profile_type: String, // "human" | "npc"
     tier: String,
     version: String,
     overall_confidence: f64,
@@ -170,13 +175,20 @@ struct ShowJson {
     reasoning: HashMap<String, Option<String>>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     working: HashMap<String, Option<String>>,
-    // Rich-only:
+    // Rich-only (human):
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     signals: HashMap<String, Vec<String>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     annotations: Vec<AnnotationJson>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     unresolved_conflicts: Vec<ConflictJson>,
+    // NPC-only:
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_adapter: Option<String>,
+    /// Derived and effective behavior scores for NPC profiles.
+    /// Each entry: { "derived": f64, "effective": f64 }
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub behaviors: HashMap<String, serde_json::Value>,
 }
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -646,6 +658,7 @@ fn build_show_json(wrapper: &mut ProfileWrapper, tier: Tier) -> ShowJson {
     }
 
     ShowJson {
+        profile_type: "human".to_string(),
         tier: tier.to_string(),
         version: profile.meta.version.clone(),
         overall_confidence: profile.meta.overall_confidence,
@@ -658,6 +671,8 @@ fn build_show_json(wrapper: &mut ProfileWrapper, tier: Tier) -> ShowJson {
         signals,
         annotations,
         unresolved_conflicts,
+        active_adapter: None,
+        behaviors: HashMap::new(),
     }
 }
 
@@ -1762,20 +1777,128 @@ fn main() {
 
 fn build_npc_show_json(
     p: &mut crate::models::miin_profile::MiinProfileDocument,
-    _tier: Tier,
+    tier: Tier,
 ) -> ShowJson {
+    use crate::models::decay::FieldClass;
+    use crate::models::observation::ObservationValue;
+
+    p.recompute_derived_behaviors();
+
+    // core: archetype, class, alignment — always included
+    let mut core: Vec<String> = Vec::new();
+
+    let primary = p.class.primary.active(FieldClass::NpcIdentity);
+    let secondary = p.class.secondary.active(FieldClass::NpcIdentity);
+    match (primary, secondary) {
+        (Some(ObservationValue::Text(pri)), Some(ObservationValue::Text(sec))) => {
+            core.push(format!("class: {pri} / {sec}"));
+        }
+        (Some(ObservationValue::Text(pri)), _) => {
+            core.push(format!("class: {pri}"));
+        }
+        _ => {}
+    }
+    if let Some(ObservationValue::Text(arch)) = p.identity.archetype.active(FieldClass::NpcIdentity)
+    {
+        core.push(format!("archetype: {arch}"));
+    }
+    if let Some(ObservationValue::Text(moral)) = p.alignment.moral.active(FieldClass::NpcIdentity) {
+        let order = p
+            .alignment
+            .order
+            .active(FieldClass::NpcIdentity)
+            .and_then(|v| {
+                if let ObservationValue::Text(s) = v {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+        core.push(format!("alignment: {moral} / {order}"));
+    }
+
+    // behaviors: derived + effective scores for all six metrics
+    let mut behaviors: HashMap<String, serde_json::Value> = HashMap::new();
+    for key in [
+        "aggression",
+        "sociability",
+        "caution",
+        "industriousness",
+        "curiosity",
+        "loyalty",
+    ] {
+        let derived = match key {
+            "aggression" => p.derive_aggression(),
+            "sociability" => p.derive_sociability(),
+            "caution" => p.derive_caution(),
+            "industriousness" => p.derive_industriousness(),
+            "curiosity" => p.derive_curiosity(),
+            "loyalty" => p.derive_loyalty(),
+            _ => 0.0,
+        };
+        let effective = p.effective_behavior(key, None);
+        behaviors.insert(
+            key.to_string(),
+            serde_json::json!({ "derived": (derived * 100.0).round() / 100.0,
+                                "effective": (effective * 100.0).round() / 100.0 }),
+        );
+    }
+
+    // working: NPC schedule fields (standard+)
+    let mut working: HashMap<String, Option<String>> = HashMap::new();
+    if tier != Tier::Nano {
+        for (name, field) in [
+            ("active_period", &p.working.active_period),
+            ("range", &p.working.range),
+            ("engagement", &p.working.engagement),
+            ("quest_affinity", &p.working.quest_affinity),
+        ] {
+            let val = field.active(FieldClass::Working).and_then(|v| {
+                if let ObservationValue::Text(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            });
+            working.insert(name.to_string(), val);
+        }
+    }
+
+    // annotations: pinned only (rich)
+    let annotations: Vec<AnnotationJson> = if tier == Tier::Rich {
+        p.annotations
+            .iter()
+            .filter(|a| a.pinned)
+            .map(|a| AnnotationJson {
+                id: a.id.clone(),
+                field: a.field.clone(),
+                note: a.note.clone(),
+                author: a.author.clone(),
+                created_at: a.created_at.clone(),
+                pinned: a.pinned,
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
     ShowJson {
-        tier: _tier.to_string(),
+        profile_type: "npc".to_string(),
+        tier: tier.to_string(),
         version: p.meta.version.clone(),
         overall_confidence: p.meta.overall_confidence,
-        core: vec![],
+        core,
         register: HashMap::new(),
-        working: HashMap::new(),
+        working,
         domains: vec![],
         values: vec![],
         reasoning: HashMap::new(),
         signals: HashMap::new(),
-        annotations: vec![],
+        annotations,
         unresolved_conflicts: vec![],
+        active_adapter: Some(p.get_active_adapter()),
+        behaviors,
     }
 }

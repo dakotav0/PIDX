@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 use pidx::{
     confirm_all_proposed, ingest_bridge_packet, reject_all_proposed, render_tier_output,
-    run_corroboration, run_decay_pass, ProfileStore,
+    run_corroboration, run_decay_pass, ProfileStore, ProfileWrapper,
 };
 
 // ── Tool input structs ────────────────────────────────────────────────────────
@@ -47,13 +47,13 @@ pub struct PidxListTool {}
 /// Retrieve a tier-scaled context block for a user.
 #[macros::mcp_tool(
     name = "pidx_show",
-    description = "Return a formatted context block for a user scaled to the requested tier (T1=minimal, T2=standard, T3=full). T1 fits in small context windows; T3 includes all confirmed observations."
+    description = "Return a formatted context block for a user scaled to the requested tier. Tier values: `nano` (minimal, ~180 tokens), `micro` (~550 tokens), `standard` (~1400 tokens), `rich` (~3200 tokens, full detail). Use `standard` when in doubt."
 )]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PidxShowTool {
-    /// User ID (e.g. `test_user` or `dakota`)
+    /// User ID (e.g. `dakota` or `kotaraine`)
     pub user_id: String,
-    /// Output tier: `T1`, `T2`, or `T3`
+    /// Output tier: `nano`, `micro`, `standard`, or `rich`
     pub tier: String,
 }
 
@@ -222,7 +222,7 @@ pub struct PidxAnnotateTool {
 /// Compare two PIDX profiles and return a structured diff.
 #[macros::mcp_tool(
     name = "pidx_diff",
-    description = "Compare two PIDX profiles and return a structured diff of their register metrics, working style, and core identity observations."
+    description = "Compare two PIDX profiles and return a structured diff of their register metrics, working style, and core identity observations. Both profiles must be human type."
 )]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PidxDiffTool {
@@ -362,11 +362,12 @@ impl PidxHandler {
                 };
                 if let Ok(mut profile) = self.store.load_or_create(user_id) {
                     profile.recompute_overall_confidence();
+                    let meta = profile.meta();
                     users.push(serde_json::json!({
                         "user_id": user_id,
-                        "version": profile.meta.version,
-                        "updated": profile.meta.updated,
-                        "overall_confidence": profile.meta.overall_confidence,
+                        "version": meta.version,
+                        "updated": meta.updated,
+                        "overall_confidence": meta.overall_confidence,
                     }));
                 }
             }
@@ -397,102 +398,155 @@ impl PidxHandler {
         let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
         profile.recompute_overall_confidence();
 
+        let meta = profile.meta();
+        let version = meta.version.clone();
+        let overall_confidence = meta.overall_confidence;
+        let updated = meta.updated.clone();
+        let delta_open = profile.delta_queue().iter().filter(|d| !d.resolved).count();
+        let review_pending = profile
+            .review_queue()
+            .iter()
+            .filter(|r| !r.resolved)
+            .count();
+
         let mut summaries: Vec<serde_json::Value> = Vec::new();
 
-        let scalar_fields: &[(&str, &pidx::models::observation::ObservationField)] = &[
-            ("working.mode", &profile.working.mode),
-            ("working.pace", &profile.working.pace),
-            ("working.feedback", &profile.working.feedback),
-            ("working.pattern", &profile.working.pattern),
-            (
-                "identity.reasoning.style",
-                &profile.identity.reasoning.style,
-            ),
-            (
-                "identity.reasoning.pattern",
-                &profile.identity.reasoning.pattern,
-            ),
-            (
-                "identity.reasoning.intake",
-                &profile.identity.reasoning.intake,
-            ),
-            (
-                "identity.reasoning.stance",
-                &profile.identity.reasoning.stance,
-            ),
-        ];
+        match &profile {
+            ProfileWrapper::Human(p) => {
+                let scalar_fields: &[(&str, &pidx::models::observation::ObservationField)] = &[
+                    ("working.mode", &p.working.mode),
+                    ("working.pace", &p.working.pace),
+                    ("working.feedback", &p.working.feedback),
+                    ("working.pattern", &p.working.pattern),
+                    ("identity.reasoning.style", &p.identity.reasoning.style),
+                    ("identity.reasoning.pattern", &p.identity.reasoning.pattern),
+                    ("identity.reasoning.intake", &p.identity.reasoning.intake),
+                    ("identity.reasoning.stance", &p.identity.reasoning.stance),
+                ];
 
-        for (path, field) in scalar_fields {
-            if field.observations.is_empty() {
-                continue;
-            }
-            let c = field
-                .observations
-                .iter()
-                .filter(|o| o.status == ObservationStatus::Confirmed)
-                .count();
-            let p = field
-                .observations
-                .iter()
-                .filter(|o| o.status == ObservationStatus::Proposed)
-                .count();
-            let d = field
-                .observations
-                .iter()
-                .filter(|o| o.status == ObservationStatus::Delta)
-                .count();
-            summaries.push(
-                serde_json::json!({ "path": path, "confirmed": c, "proposed": p, "delta": d }),
-            );
-        }
-
-        // List fields
-        let list_fields: &[(&str, &[pidx::models::observation::ObservationField])] = &[
-            ("identity.core", &profile.identity.core),
-            ("domains", &profile.domains),
-            ("values", &profile.values),
-            ("signals.phrases", &profile.signals.phrases),
-            ("signals.avoidances", &profile.signals.avoidances),
-            ("signals.rhythms", &profile.signals.rhythms),
-            ("signals.framings", &profile.signals.framings),
-        ];
-
-        for (base, slice) in list_fields {
-            for (i, f) in slice.iter().enumerate() {
-                if f.observations.is_empty() {
-                    continue;
+                for (path, field) in scalar_fields {
+                    if field.observations.is_empty() {
+                        continue;
+                    }
+                    let c = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Confirmed)
+                        .count();
+                    let pr = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Proposed)
+                        .count();
+                    let d = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Delta)
+                        .count();
+                    summaries.push(serde_json::json!({ "path": path, "confirmed": c, "proposed": pr, "delta": d }));
                 }
-                let c = f
-                    .observations
-                    .iter()
-                    .filter(|o| o.status == ObservationStatus::Confirmed)
-                    .count();
-                let p = f
-                    .observations
-                    .iter()
-                    .filter(|o| o.status == ObservationStatus::Proposed)
-                    .count();
-                let d = f
-                    .observations
-                    .iter()
-                    .filter(|o| o.status == ObservationStatus::Delta)
-                    .count();
-                summaries.push(serde_json::json!({
-                    "path": format!("{base}.{i}"),
-                    "confirmed": c, "proposed": p, "delta": d
-                }));
+
+                let list_fields: &[(&str, &[pidx::models::observation::ObservationField])] = &[
+                    ("identity.core", &p.identity.core),
+                    ("domains", &p.domains),
+                    ("values", &p.values),
+                    ("signals.phrases", &p.signals.phrases),
+                    ("signals.avoidances", &p.signals.avoidances),
+                    ("signals.rhythms", &p.signals.rhythms),
+                    ("signals.framings", &p.signals.framings),
+                ];
+
+                for (base, slice) in list_fields {
+                    for (i, f) in slice.iter().enumerate() {
+                        if f.observations.is_empty() {
+                            continue;
+                        }
+                        let c = f
+                            .observations
+                            .iter()
+                            .filter(|o| o.status == ObservationStatus::Confirmed)
+                            .count();
+                        let pr = f
+                            .observations
+                            .iter()
+                            .filter(|o| o.status == ObservationStatus::Proposed)
+                            .count();
+                        let d = f
+                            .observations
+                            .iter()
+                            .filter(|o| o.status == ObservationStatus::Delta)
+                            .count();
+                        summaries.push(serde_json::json!({
+                            "path": format!("{base}.{i}"),
+                            "confirmed": c, "proposed": pr, "delta": d
+                        }));
+                    }
+                }
+            }
+            ProfileWrapper::Npc(npc) => {
+                // Report NPC class and behavior fields
+                for (name, field) in [
+                    ("class.primary", &npc.class.primary),
+                    ("class.secondary", &npc.class.secondary),
+                    ("identity.archetype", &npc.identity.archetype),
+                    ("identity.stance", &npc.identity.stance),
+                    ("identity.sub_archetype", &npc.identity.sub_archetype),
+                    ("alignment.moral", &npc.alignment.moral),
+                    ("alignment.order", &npc.alignment.order),
+                ] {
+                    if field.observations.is_empty() {
+                        continue;
+                    }
+                    let c = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Confirmed)
+                        .count();
+                    let pr = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Proposed)
+                        .count();
+                    let d = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Delta)
+                        .count();
+                    summaries.push(serde_json::json!({ "path": name, "confirmed": c, "proposed": pr, "delta": d }));
+                }
+                for (i, f) in npc.identity.core.iter().enumerate() {
+                    if f.observations.is_empty() {
+                        continue;
+                    }
+                    let c = f
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Confirmed)
+                        .count();
+                    let pr = f
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Proposed)
+                        .count();
+                    let d = f
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Delta)
+                        .count();
+                    summaries.push(serde_json::json!({ "path": format!("identity.core.{i}"), "confirmed": c, "proposed": pr, "delta": d }));
+                }
             }
         }
 
         info!(user_id = %t.user_id, "pidx_status");
         json_text(&serde_json::json!({
             "user_id": t.user_id,
-            "version": profile.meta.version,
-            "overall_confidence": profile.meta.overall_confidence,
-            "updated": profile.meta.updated,
+            "version": version,
+            "overall_confidence": overall_confidence,
+            "updated": updated,
             "fields": summaries,
-            "delta_queue_open": profile.delta_queue.iter().filter(|d| !d.resolved).count(),
-            "review_queue_pending": profile.review_queue.iter().filter(|r| !r.resolved).count(),
+            "delta_queue_open": delta_open,
+            "review_queue_pending": review_pending,
         }))
     }
 
@@ -608,12 +662,12 @@ impl PidxHandler {
         let mut cleared_count = 0;
 
         if t.target == "deltas" || t.target == "all" {
-            cleared_count += profile.delta_queue.len();
-            profile.delta_queue.clear();
+            cleared_count += profile.delta_queue().len();
+            profile.delta_queue_mut().clear();
         }
         if t.target == "reviews" || t.target == "all" {
-            cleared_count += profile.review_queue.len();
-            profile.review_queue.clear();
+            cleared_count += profile.review_queue().len();
+            profile.review_queue_mut().clear();
         }
         if t.target == "proposed" || t.target == "all" {
             let matching = reject_all_proposed(&mut profile, "");
@@ -634,7 +688,7 @@ impl PidxHandler {
     async fn handle_delta_list(&self, t: PidxDeltaListTool) -> ToolResult {
         let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
         let items: Vec<serde_json::Value> = profile
-            .delta_queue
+            .delta_queue()
             .iter()
             .filter(|d| !d.resolved)
             .map(|d| {
@@ -670,7 +724,7 @@ impl PidxHandler {
 
         // Borrow-split: collect what we need, release immutable borrow.
         let found = profile
-            .delta_queue
+            .delta_queue()
             .iter()
             .find(|d| d.id == t.delta_id && !d.resolved)
             .map(|d| {
@@ -695,7 +749,11 @@ impl PidxHandler {
         };
 
         // Mark the delta resolved.
-        if let Some(d) = profile.delta_queue.iter_mut().find(|d| d.id == t.delta_id) {
+        if let Some(d) = profile
+            .delta_queue_mut()
+            .iter_mut()
+            .find(|d| d.id == t.delta_id)
+        {
             d.resolved = true;
         }
 
@@ -728,7 +786,7 @@ impl PidxHandler {
     async fn handle_review_list(&self, t: PidxReviewListTool) -> ToolResult {
         let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
         let items: Vec<serde_json::Value> = profile
-            .review_queue
+            .review_queue()
             .iter()
             .filter(|r| !r.resolved)
             .map(|r| {
@@ -756,7 +814,7 @@ impl PidxHandler {
 
         // Borrow-split: collect field + index, release borrow.
         let found = profile
-            .review_queue
+            .review_queue()
             .iter()
             .find(|r| r.id == t.review_id && !r.resolved)
             .map(|r| (r.field.clone(), r.observation_index));
@@ -770,7 +828,7 @@ impl PidxHandler {
 
         // Mark resolved.
         if let Some(r) = profile
-            .review_queue
+            .review_queue_mut()
             .iter_mut()
             .find(|r| r.id == t.review_id)
         {
@@ -809,13 +867,13 @@ impl PidxHandler {
 
         let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
 
-        // Validate the field path exists.
+        // Validate the field path exists (Human profiles only).
         if resolve_field_mut(&mut profile, &t.field).is_none() {
             return Err(tool_err(format!("unknown field path '{}'", t.field)));
         }
 
         let id = Uuid::new_v4().to_string();
-        profile.annotations.push(Annotation {
+        profile.annotations_mut().push(Annotation {
             id: id.clone(),
             field: t.field.clone(),
             note: t.note.clone(),
@@ -842,30 +900,51 @@ impl PidxHandler {
         profile_a.recompute_overall_confidence();
         profile_b.recompute_overall_confidence();
 
+        let conf_a = profile_a.meta().overall_confidence;
+        let conf_b = profile_b.meta().overall_confidence;
+
+        // Extract human-profile data; return an error for NPC profiles.
+        let p_a = match &profile_a {
+            ProfileWrapper::Human(p) => p,
+            ProfileWrapper::Npc(_) => {
+                return Err(tool_err(format!(
+                    "'{}' is an NPC profile; diff requires human profiles",
+                    t.user_a
+                )));
+            }
+        };
+        let p_b = match &profile_b {
+            ProfileWrapper::Human(p) => p,
+            ProfileWrapper::Npc(_) => {
+                return Err(tool_err(format!(
+                    "'{}' is an NPC profile; diff requires human profiles",
+                    t.user_b
+                )));
+            }
+        };
+
         // Register diff
-        let reg_a = &profile_a.comm;
-        let reg_b = &profile_b.comm;
         let register_diff = serde_json::json!([
-            { "metric": "formality",   "a": reg_a.formality.score(None),   "b": reg_b.formality.score(None) },
-            { "metric": "directness",  "a": reg_a.directness.score(None),  "b": reg_b.directness.score(None) },
-            { "metric": "hedging",     "a": reg_a.hedging.score(None),     "b": reg_b.hedging.score(None) },
-            { "metric": "humor",       "a": reg_a.humor.score(None),       "b": reg_b.humor.score(None) },
-            { "metric": "abstraction", "a": reg_a.abstraction.score(None), "b": reg_b.abstraction.score(None) },
-            { "metric": "affect",      "a": reg_a.affect.score(None),      "b": reg_b.affect.score(None) },
+            { "metric": "formality",   "a": p_a.comm.formality.score(None),   "b": p_b.comm.formality.score(None) },
+            { "metric": "directness",  "a": p_a.comm.directness.score(None),  "b": p_b.comm.directness.score(None) },
+            { "metric": "hedging",     "a": p_a.comm.hedging.score(None),     "b": p_b.comm.hedging.score(None) },
+            { "metric": "humor",       "a": p_a.comm.humor.score(None),       "b": p_b.comm.humor.score(None) },
+            { "metric": "abstraction", "a": p_a.comm.abstraction.score(None), "b": p_b.comm.abstraction.score(None) },
+            { "metric": "affect",      "a": p_a.comm.affect.score(None),      "b": p_b.comm.affect.score(None) },
         ]);
 
         // Working diff
         let working_diff = serde_json::json!({
-            "mode_a":     active_text(&profile_a.working.mode),
-            "mode_b":     active_text(&profile_b.working.mode),
-            "pace_a":     active_text(&profile_a.working.pace),
-            "pace_b":     active_text(&profile_b.working.pace),
-            "feedback_a": active_text(&profile_a.working.feedback),
-            "feedback_b": active_text(&profile_b.working.feedback),
+            "mode_a":     active_text(&p_a.working.mode),
+            "mode_b":     active_text(&p_b.working.mode),
+            "pace_a":     active_text(&p_a.working.pace),
+            "pace_b":     active_text(&p_b.working.pace),
+            "feedback_a": active_text(&p_a.working.feedback),
+            "feedback_b": active_text(&p_b.working.feedback),
         });
 
         // Core identity — surface confirmed text observations
-        let core_a: Vec<serde_json::Value> = profile_a
+        let core_a: Vec<serde_json::Value> = p_a
             .identity
             .core
             .iter()
@@ -876,7 +955,7 @@ impl PidxHandler {
                     .map(|o| serde_json::json!(format!("{:?}", o.value)))
             })
             .collect();
-        let core_b: Vec<serde_json::Value> = profile_b
+        let core_b: Vec<serde_json::Value> = p_b
             .identity
             .core
             .iter()
@@ -892,8 +971,8 @@ impl PidxHandler {
         json_text(&serde_json::json!({
             "user_a": t.user_a,
             "user_b": t.user_b,
-            "overall_confidence_a": profile_a.meta.overall_confidence,
-            "overall_confidence_b": profile_b.meta.overall_confidence,
+            "overall_confidence_a": conf_a,
+            "overall_confidence_b": conf_b,
             "core_a": core_a,
             "core_b": core_b,
             "register_diff": register_diff,
@@ -905,7 +984,11 @@ impl PidxHandler {
         let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
         let threshold = t.threshold.unwrap_or(0.30);
         let newly_flagged = run_decay_pass(&mut profile, threshold);
-        let pending = profile.review_queue.iter().filter(|r| !r.resolved).count();
+        let pending = profile
+            .review_queue()
+            .iter()
+            .filter(|r| !r.resolved)
+            .count();
         if newly_flagged > 0 {
             self.store.save(&mut profile).map_err(tool_err)?;
         }
@@ -919,15 +1002,24 @@ impl PidxHandler {
     }
 }
 
-// ── Field resolvers (mirrors Tauri commands.rs) ───────────────────────────────
+// ── Field resolvers ───────────────────────────────────────────────────────────
+//
+// These operate on the inner ProfileDocument (human profiles only). NPC profiles
+// return an error or None — field-path operations are not defined for NPCs yet.
 
 fn resolve_obs_mut<'a>(
-    profile: &'a mut pidx::ProfileDocument,
+    profile: &'a mut ProfileWrapper,
     path: &str,
     index: usize,
 ) -> Result<&'a mut pidx::models::observation::Observation, String> {
-    let field =
-        resolve_field_mut(profile, path).ok_or_else(|| format!("unknown field path '{path}'"))?;
+    let human = match profile {
+        ProfileWrapper::Human(p) => p,
+        ProfileWrapper::Npc(_) => {
+            return Err("field-path operations are not supported for NPC profiles".into())
+        }
+    };
+    let field = resolve_field_mut_human(human, path)
+        .ok_or_else(|| format!("unknown field path '{path}'"))?;
     let len = field.observations.len();
     field
         .observations
@@ -936,6 +1028,16 @@ fn resolve_obs_mut<'a>(
 }
 
 fn resolve_field_mut<'a>(
+    profile: &'a mut ProfileWrapper,
+    path: &str,
+) -> Option<&'a mut pidx::models::observation::ObservationField> {
+    match profile {
+        ProfileWrapper::Human(p) => resolve_field_mut_human(p, path),
+        ProfileWrapper::Npc(_) => None,
+    }
+}
+
+fn resolve_field_mut_human<'a>(
     profile: &'a mut pidx::ProfileDocument,
     path: &str,
 ) -> Option<&'a mut pidx::models::observation::ObservationField> {
@@ -983,5 +1085,6 @@ fn active_text(field: &pidx::models::observation::ObservationField) -> Option<St
     field.active(FieldClass::Working).map(|v| match v {
         ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
+        ObservationValue::Number(n) => n.to_string(),
     })
 }

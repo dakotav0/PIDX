@@ -178,6 +178,36 @@ impl MiinProfileDocument {
         // we might cache the derived results or check for drift here.
         self.recompute_overall_confidence();
     }
+
+    /// Determines the active mRNA adapter for routing.
+    /// Requires high confidence and dense memory to authorize a sub-archetype transfer.
+    pub fn get_active_adapter(&self) -> String {
+        // 1. Get the foundational baseline adapter
+        let base_archetype = if let Some(ObservationValue::Text(v)) =
+            self.identity.archetype.active(FieldClass::NpcIdentity)
+        {
+            v.clone().to_lowercase()
+        } else {
+            "merchant".to_string() // Cold-start fallback
+        };
+
+        // 2. Check if a sub-archetype has been proposed/confirmed
+        let sub_archetype_opt = self.identity.sub_archetype.active(FieldClass::NpcIdentity);
+
+        if let Some(ObservationValue::Text(sub_arch)) = sub_archetype_opt {
+            // 3. The Quality Gates
+            let has_dense_memory = self.memories.core.len() >= 5;
+            let has_high_confidence = self.meta.overall_confidence > 0.85;
+
+            // 4. Threshold Check
+            if has_dense_memory && has_high_confidence {
+                return sub_arch.clone().to_lowercase();
+            }
+        }
+
+        // 5. Fallback to base if thresholds aren't met
+        base_archetype
+    }
 }
 
 pub fn get_stat_value(field: &ObservationField) -> f64 {

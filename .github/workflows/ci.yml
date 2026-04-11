@@ -24,16 +24,17 @@ jobs:
       - name: Audit dependencies
         uses: actions-rust-lang/audit@v1
 
-      - name: Build (excluding Tauri UI and MCP)
-        run: cargo build --workspace --exclude pidx-ui --exclude pidx-mcp
+      - name: Build (excluding Tauri UI)
+        run: cargo build --workspace --exclude pidx-ui
 
-      - name: Test (excluding Tauri UI and MCP)
-        run: cargo test --workspace --exclude pidx-ui --exclude pidx-mcp
+      - name: Test (excluding Tauri UI)
+        run: cargo test --workspace --exclude pidx-ui
 
-      - name: Clippy (excluding Tauri UI and MCP)
-        run: cargo clippy --workspace --exclude pidx-ui --exclude pidx-mcp -- -D warnings
+      - name: Clippy (excluding Tauri UI)
+        run: cargo clippy --workspace --exclude pidx-ui -- -D warnings
 
       - name: Check schema drift
+        shell: bash
         run: |
           cargo run --example emit_schema > docs/pidx-schema.json.new
           diff docs/pidx-schema.json docs/pidx-schema.json.new
