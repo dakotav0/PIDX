@@ -89,18 +89,23 @@ impl ProfileStore {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading profile at {}", path.display()))?;
 
-        // Peek at `profile_type` to decide which struct to deserialize into.
+        // Peek at the raw JSON to decide which struct to deserialize into.
         // Files are stored as plain inner-struct JSON (not wrapped in the
-        // ProfileWrapper enum tag), so we discriminate by field presence:
-        // MiinProfileDocument always writes `"profile_type": "miin"`.
+        // ProfileWrapper enum tag). Detection priority:
+        //   1. `profile_type == "miin"` — explicit field written by new saves
+        //   2. `stats` key present — old MIIN files pre-dating the profile_type field
+        //   3. filename starts with `npc_` — convention-based fallback
         let raw: serde_json::Value = serde_json::from_str(&content)
             .with_context(|| format!("parsing profile at {}", path.display()))?;
         let profile_type = raw
             .get("profile_type")
             .and_then(|v| v.as_str())
             .unwrap_or("human");
+        let is_npc = profile_type == "miin"
+            || raw.get("stats").is_some()
+            || safe_id(user_id).starts_with("npc_");
 
-        let wrapper = if profile_type == "miin" {
+        let wrapper = if is_npc {
             let doc: MiinProfileDocument = serde_json::from_value(raw)
                 .with_context(|| format!("deserializing NPC profile at {}", path.display()))?;
             ProfileWrapper::Npc(Box::new(doc))
