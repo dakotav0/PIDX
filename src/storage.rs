@@ -88,9 +88,28 @@ impl ProfileStore {
         }
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading profile at {}", path.display()))?;
-        let doc = serde_json::from_str(&content)
+
+        // Peek at `profile_type` to decide which struct to deserialize into.
+        // Files are stored as plain inner-struct JSON (not wrapped in the
+        // ProfileWrapper enum tag), so we discriminate by field presence:
+        // MiinProfileDocument always writes `"profile_type": "miin"`.
+        let raw: serde_json::Value = serde_json::from_str(&content)
             .with_context(|| format!("parsing profile at {}", path.display()))?;
-        Ok(Some(doc))
+        let profile_type = raw
+            .get("profile_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("human");
+
+        let wrapper = if profile_type == "miin" {
+            let doc: MiinProfileDocument = serde_json::from_value(raw)
+                .with_context(|| format!("deserializing NPC profile at {}", path.display()))?;
+            ProfileWrapper::Npc(Box::new(doc))
+        } else {
+            let doc: ProfileDocument = serde_json::from_value(raw)
+                .with_context(|| format!("deserializing human profile at {}", path.display()))?;
+            ProfileWrapper::Human(Box::new(doc))
+        };
+        Ok(Some(wrapper))
     }
 
     /// Load if the file exists; otherwise return a fresh blank profile.
