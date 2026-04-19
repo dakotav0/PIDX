@@ -1,13 +1,6 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
+	import { listUsers, type UserEntry } from '$lib/ipc';
 	import { onMount } from 'svelte';
-
-	interface UserEntry {
-		user_id: string;
-		version: string;
-		updated: string;
-		overall_confidence: number;
-	}
 
 	let users = $state<UserEntry[]>([]);
 	let error = $state<string | null>(null);
@@ -15,7 +8,7 @@
 
 	onMount(async () => {
 		try {
-			const result = await invoke<{ count: number; users: UserEntry[] }>('list_users');
+			const result = await listUsers();
 			users = result.users;
 		} catch (e) {
 			error = String(e);
@@ -25,45 +18,27 @@
 	});
 </script>
 
-<main>
-	<h1>PIDX</h1>
+<main class="p-6">
+	<h1 class="text-xl font-bold mb-6 text-[var(--color-accent)]">PIDX</h1>
 
 	{#if loading}
-		<p>Loading profiles…</p>
+		<p class="text-[var(--color-text-secondary)]">Loading profiles…</p>
 	{:else if error}
-		<p class="error">Error: {error}</p>
+		<p class="text-[var(--color-error)]">Error: {error}</p>
 	{:else if users.length === 0}
-		<p>No profiles found.</p>
+		<p class="text-[var(--color-text-muted)]">No profiles found.</p>
 	{:else}
-		<ul>
+		<ul class="space-y-1">
 			{#each users as user}
-				<li>
-					<strong>{user.user_id}</strong>
-					<span>v{user.version}</span>
-					<span>{(user.overall_confidence * 100).toFixed(0)}%</span>
-					<span>{user.updated.slice(0, 10)}</span>
+				<li class="flex gap-4 py-2 border-b border-[var(--color-border)]">
+					<a href="/profile/{user.user_id}" class="font-bold text-[var(--color-text-primary)] hover:text-[var(--color-accent)]">
+						{user.user_id}
+					</a>
+					<span class="text-[var(--color-text-muted)]">v{user.version}</span>
+					<span class="text-[var(--color-accent)]">{(user.overall_confidence * 100).toFixed(0)}%</span>
+					<span class="text-[var(--color-text-secondary)]">{user.updated.slice(0, 10)}</span>
 				</li>
 			{/each}
 		</ul>
 	{/if}
 </main>
-
-<style>
-	main {
-		padding: 2rem;
-		font-family: monospace;
-	}
-	ul {
-		list-style: none;
-		padding: 0;
-	}
-	li {
-		display: flex;
-		gap: 1rem;
-		padding: 0.5rem 0;
-		border-bottom: 1px solid #333;
-	}
-	.error {
-		color: red;
-	}
-</style>
