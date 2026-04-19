@@ -616,7 +616,9 @@ pub async fn ingest_packet_content(
     invalidate(&state, &user_id).await;
 
     info!(user_id, proposed, deltas, "ingest_packet_content");
-    Ok(serde_json::json!({ "ok": true, "observations_proposed": proposed, "deltas_flagged": deltas }))
+    Ok(
+        serde_json::json!({ "ok": true, "observations_proposed": proposed, "deltas_flagged": deltas }),
+    )
 }
 
 /// Resolve a decayed observation from the review queue.
