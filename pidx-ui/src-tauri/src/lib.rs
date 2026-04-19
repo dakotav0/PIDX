@@ -25,7 +25,9 @@ pub fn run() {
             commands::reject_all,
             commands::clear,
             commands::ingest_packet,
+            commands::ingest_packet_content,
             commands::resolve_delta,
+            commands::resolve_review,
             commands::annotate,
             commands::decay,
         ])

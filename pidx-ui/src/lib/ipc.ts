@@ -27,8 +27,6 @@ export interface FieldSummary {
 	confirmed: number;
 	proposed: number;
 	delta: number;
-	proposal_count?: number;
-	preview: string | null;
 }
 
 export interface StatusResult {
@@ -37,10 +35,91 @@ export interface StatusResult {
 	overall_confidence: number;
 	updated: string;
 	fields: FieldSummary[];
-	totals: { confirmed: number; proposed: number; delta: number };
 	delta_queue_open: number;
 	review_queue_pending: number;
-	bridge_log_processed: number;
+}
+
+// ── Profile document types ────────────────────────────────────────────────────
+
+export type ObservationStatus = 'proposed' | 'confirmed' | 'rejected' | 'delta' | 'archived';
+
+export interface ObservationDomainValue {
+	label: string;
+	weight: number;
+	proficiency?: string;
+}
+
+export interface ObservationRow {
+	value: string | number | ObservationDomainValue;
+	source: {
+		origination: string;
+		orientation: string;
+		session_ref: string;
+		timestamp: string;
+	};
+	confidence: number;
+	weight: number;
+	status: ObservationStatus;
+	revision: number;
+	decay_exempt: boolean;
+}
+
+export interface ProfileField {
+	observations: ObservationRow[];
+	proposal_count?: number;
+}
+
+export interface DeltaItem {
+	id: string;
+	field: string;
+	a: ObservationRow;
+	b: ObservationRow;
+	created_at: string;
+	resolved: boolean;
+}
+
+export interface ReviewItem {
+	id: string;
+	field: string;
+	observation_index: number;
+	effective_confidence: number;
+	flagged_at: string;
+	resolved: boolean;
+}
+
+export interface ProfileDocument {
+	meta: {
+		user_id: string;
+		version: string;
+		updated: string;
+		overall_confidence: number;
+	};
+	working: {
+		mode: ProfileField;
+		pace: ProfileField;
+		feedback: ProfileField;
+		pattern: ProfileField;
+	};
+	identity: {
+		core: ProfileField[];
+		reasoning: {
+			style: ProfileField;
+			pattern: ProfileField;
+			intake: ProfileField;
+			stance: ProfileField;
+		};
+	};
+	domains: ProfileField[];
+	values: ProfileField[];
+	signals: {
+		phrases: ProfileField[];
+		avoidances: ProfileField[];
+		rhythms: ProfileField[];
+		framings: ProfileField[];
+	};
+	delta_queue: DeltaItem[];
+	review_queue: ReviewItem[];
+	annotations: unknown[];
 }
 
 export interface DeltaEntry {
@@ -64,7 +143,7 @@ export function listUsers(): Promise<{ count: number; users: UserEntry[] }> {
 	return invoke('list_users');
 }
 
-export function getProfile(userId: string): Promise<unknown> {
+export function getProfile(userId: string): Promise<ProfileDocument> {
 	return invoke('get_profile', { user_id: userId });
 }
 
@@ -117,11 +196,26 @@ export function clearProfile(
 
 // ── Lifecycle commands ────────────────────────────────────────────────────────
 
+export function ingestPacketContent(
+	userId: string,
+	packetJson: string
+): Promise<OkResult & { observations_proposed: number; deltas_flagged: number }> {
+	return invoke('ingest_packet_content', { user_id: userId, packet_json: packetJson });
+}
+
 export function ingestPacket(
 	userId: string,
 	packetPath: string
 ): Promise<OkResult & { observations_proposed: number; deltas_flagged: number }> {
 	return invoke('ingest_packet', { user_id: userId, packet_path: packetPath });
+}
+
+export function resolveReview(
+	userId: string,
+	reviewId: string,
+	action: 'keep' | 'discard'
+): Promise<OkResult & { review_id: string; action: string; field: string }> {
+	return invoke('resolve_review', { user_id: userId, review_id: reviewId, action });
 }
 
 export function resolveDelta(
@@ -144,6 +238,6 @@ export function annotate(
 export function runDecay(
 	userId: string,
 	threshold?: number
-): Promise<OkResult & { flagged: number; review_queue_size: number }> {
+): Promise<OkResult & { newly_flagged: number; review_queue_pending: number }> {
 	return invoke('decay', { user_id: userId, threshold });
 }

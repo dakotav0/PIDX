@@ -594,6 +594,80 @@ pub async fn decay(
     }))
 }
 
+/// Ingest a bridge packet supplied as a JSON string (UI-authored, no file needed).
+#[tauri::command]
+pub async fn ingest_packet_content(
+    user_id: String,
+    packet_json: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::models::bridge::BridgePacket;
+
+    let packet: BridgePacket =
+        serde_json::from_str(&packet_json).map_err(|e| format!("invalid bridge packet: {e}"))?;
+
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
+    let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, "ui-authored");
+    run_corroboration(&mut profile);
+    state.store.save(&mut profile).map_err(|e| e.to_string())?;
+    invalidate(&state, &user_id).await;
+
+    info!(user_id, proposed, deltas, "ingest_packet_content");
+    Ok(serde_json::json!({ "ok": true, "observations_proposed": proposed, "deltas_flagged": deltas }))
+}
+
+/// Resolve a decayed observation from the review queue.
+///
+/// `action` is `"keep"` (leave the observation as-is, dismiss the review item)
+/// or `"discard"` (archive the observation and dismiss the review item).
+#[tauri::command]
+pub async fn resolve_review(
+    user_id: String,
+    review_id: String,
+    action: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::models::observation::ObservationStatus;
+
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
+
+    let (field, obs_index) = {
+        let item = profile
+            .review_queue
+            .iter()
+            .find(|r| r.id == review_id && !r.resolved)
+            .ok_or_else(|| format!("no open review with id '{review_id}'"))?;
+        (item.field.clone(), item.observation_index)
+    };
+
+    for r in profile.review_queue.iter_mut() {
+        if r.id == review_id {
+            r.resolved = true;
+            break;
+        }
+    }
+
+    if action == "discard" {
+        if let Some(field_ref) = resolve_field_mut(&mut profile, &field) {
+            if let Some(obs) = field_ref.observations.get_mut(obs_index) {
+                obs.status = ObservationStatus::Archived;
+            }
+        }
+    }
+
+    state.store.save(&mut profile).map_err(|e| e.to_string())?;
+    invalidate(&state, &user_id).await;
+    info!(user_id, review_id, action, "resolve_review");
+
+    Ok(serde_json::json!({ "ok": true, "review_id": review_id, "action": action, "field": field }))
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /// Resolve a field path to a mutable observation reference.
