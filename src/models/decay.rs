@@ -31,12 +31,12 @@ impl FieldClass {
     /// will tell you to handle it here before you can ship.
     pub fn lambda(self) -> f64 {
         match self {
-            FieldClass::Identity   => 0.0005,
-            FieldClass::Value      => 0.0008,
-            FieldClass::Register   => 0.0100,
-            FieldClass::Domain     => 0.0080,
-            FieldClass::Working    => 0.0070,
-            FieldClass::Signal     => 0.0200,
+            FieldClass::Identity => 0.0005,
+            FieldClass::Value => 0.0008,
+            FieldClass::Register => 0.0100,
+            FieldClass::Domain => 0.0080,
+            FieldClass::Working => 0.0070,
+            FieldClass::Signal => 0.0200,
             FieldClass::Annotation => 0.0,
         }
     }

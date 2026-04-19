@@ -15,7 +15,9 @@ use std::fmt;
 use chrono::Utc;
 
 use crate::models::{
-    decay::FieldClass, evidence::RegisterMetric, observation::{ObservationField, ObservationValue},
+    decay::FieldClass,
+    evidence::RegisterMetric,
+    observation::{ObservationField, ObservationValue},
     profile::ProfileDocument,
 };
 
@@ -36,10 +38,10 @@ pub enum Tier {
 impl fmt::Display for Tier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Tier::Nano     => write!(f, "nano"),
-            Tier::Micro    => write!(f, "micro"),
+            Tier::Nano => write!(f, "nano"),
+            Tier::Micro => write!(f, "micro"),
             Tier::Standard => write!(f, "standard"),
-            Tier::Rich     => write!(f, "rich"),
+            Tier::Rich => write!(f, "rich"),
         }
     }
 }
@@ -48,11 +50,13 @@ impl std::str::FromStr for Tier {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "nano"     => Ok(Tier::Nano),
-            "micro"    => Ok(Tier::Micro),
+            "nano" => Ok(Tier::Nano),
+            "micro" => Ok(Tier::Micro),
             "standard" => Ok(Tier::Standard),
-            "rich"     => Ok(Tier::Rich),
-            other      => Err(format!("unknown tier: {other}; expected nano|micro|standard|rich")),
+            "rich" => Ok(Tier::Rich),
+            other => Err(format!(
+                "unknown tier: {other}; expected nano|micro|standard|rich"
+            )),
         }
     }
 }
@@ -66,16 +70,18 @@ impl std::str::FromStr for Tier {
 /// own formatter that also shows the weight percentage.
 fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
     field.active(fc).map(|v| match v {
-        ObservationValue::Text(s)   => s.clone(),
+        ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
+        ObservationValue::Number(n) => n.to_string(),
     })
 }
 
 /// Display representation of any ObservationValue. Used in delta listings.
 fn value_display(v: &ObservationValue) -> String {
     match v {
-        ObservationValue::Text(s)   => s.clone(),
+        ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
+        ObservationValue::Number(n) => n.to_string(),
     }
 }
 
@@ -104,12 +110,12 @@ fn section_register(profile: &ProfileDocument) -> Option<String> {
     // Array of (&name, &metric) — Rust's answer to Python's getattr() iteration.
     // Since Register has named fields (not a Vec), we enumerate them explicitly.
     let metrics: [(&str, &RegisterMetric); 6] = [
-        ("formality",   &reg.formality),
-        ("directness",  &reg.directness),
-        ("hedging",     &reg.hedging),
-        ("humor",       &reg.humor),
+        ("formality", &reg.formality),
+        ("directness", &reg.directness),
+        ("hedging", &reg.hedging),
+        ("humor", &reg.humor),
         ("abstraction", &reg.abstraction),
-        ("affect",      &reg.affect),
+        ("affect", &reg.affect),
     ];
 
     let mut lines: Vec<String> = Vec::new();
@@ -137,11 +143,11 @@ fn section_working(profile: &ProfileDocument, fields: &[&str]) -> Option<String>
         // Match the string name to the actual struct field.
         // This is the idiomatic Rust substitute for Python's getattr().
         let field = match name {
-            "mode"     => &w.mode,
-            "pace"     => &w.pace,
+            "mode" => &w.mode,
+            "pace" => &w.pace,
             "feedback" => &w.feedback,
-            "pattern"  => &w.pattern,
-            _          => continue,
+            "pattern" => &w.pattern,
+            _ => continue,
         };
         if let Some(text) = active_text(field, FieldClass::Working) {
             lines.push(format!("- {name}: {text}"));
@@ -163,6 +169,7 @@ fn section_domains(profile: &ProfileDocument) -> Option<String> {
                     format!("- {} ({:.0}%)", d.label, d.weight * 100.0)
                 }
                 ObservationValue::Text(s) => format!("- {s}"),
+                ObservationValue::Number(n) => format!("- {n}"),
             };
             entries.push(line);
         }
@@ -190,9 +197,9 @@ fn section_reasoning(profile: &ProfileDocument) -> Option<String> {
     let r = &profile.identity.reasoning;
     let mut lines: Vec<String> = Vec::new();
     for (name, field) in [
-        ("style",   &r.style),
+        ("style", &r.style),
         ("pattern", &r.pattern),
-        ("intake",  &r.intake),
+        ("intake", &r.intake),
     ] {
         if let Some(text) = active_text(field, FieldClass::Identity) {
             lines.push(format!("- {name}: {text}"));
@@ -209,10 +216,10 @@ fn section_signals(profile: &ProfileDocument) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
     for (cat, fields) in [
-        ("phrases",    s.phrases.as_slice()),
+        ("phrases", s.phrases.as_slice()),
         ("avoidances", s.avoidances.as_slice()),
-        ("rhythms",    s.rhythms.as_slice()),
-        ("framings",   s.framings.as_slice()),
+        ("rhythms", s.rhythms.as_slice()),
+        ("framings", s.framings.as_slice()),
     ] {
         let mut items: Vec<String> = Vec::new();
         for field in fields {
@@ -276,7 +283,7 @@ fn section_deltas(profile: &ProfileDocument) -> Option<String> {
 /// reflects the current state of the profile.
 pub fn render_tier_output(profile: &mut ProfileDocument, tier: Tier) -> String {
     profile.recompute_overall_confidence();
-    let conf    = profile.meta.overall_confidence;
+    let conf = profile.meta.overall_confidence;
     let version = profile.meta.version.clone();
     let tier_label = tier.to_string().to_uppercase();
 
@@ -383,16 +390,16 @@ pub fn compute_resonance(
         if metric.evidence.is_empty() {
             return 0.0;
         }
-        let user_score  = metric.score(Some(now));
+        let user_score = metric.score(Some(now));
         let content_val = match content_metadata.get(key) {
             Some(&v) => v,
-            None     => return 0.0,
+            None => return 0.0,
         };
         let diff = (user_score - content_val).abs();
         if diff < 2.0 {
-             weight   // close match → boost
+            weight // close match → boost
         } else if diff > 5.0 {
-            -weight   // mismatch → penalty
+            -weight // mismatch → penalty
         } else {
             0.0
         }
@@ -400,8 +407,8 @@ pub fn compute_resonance(
 
     let reg = &profile.comm;
     score += align(&reg.abstraction, "abstractness", 0.12);
-    score += align(&reg.humor,       "humor_level",  0.08);
-    score += align(&reg.formality,   "complexity",   0.06);
+    score += align(&reg.humor, "humor_level", 0.08);
+    score += align(&reg.formality, "complexity", 0.06);
 
     // Clamp to [0.5, 2.0] and round to 3 decimal places, matching Python.
     (score.clamp(0.5, 2.0) * 1000.0).round() / 1000.0

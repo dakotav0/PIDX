@@ -16,7 +16,7 @@ PIDX stores structured personality profiles built from timestamped observations.
 
 **Read:**
 - `pidx_list` — list all known profiles
-- `pidx_show` — fetch a tier-scaled context block (T1 = minimal, T2 = standard, T3 = full)
+- `pidx_show` — fetch a tier-scaled context block (`nano` ~180t / `micro` ~550t / `standard` ~1400t / `rich` ~3200t)
 - `pidx_status` — per-field observation counts + open delta/review queue sizes
 - `pidx_delta_list` — list unresolved delta conflicts with both candidate values
 - `pidx_review_list` — list observations flagged by the decay pass
@@ -31,7 +31,7 @@ PIDX stores structured personality profiles built from timestamped observations.
 **Lifecycle:**
 - `pidx_delta_resolve` — resolve a conflict by choosing side `"a"` or `"b"`
 - `pidx_review_process` — `"solidify"` (decay-exempt + confirm) or `"discard"` (archive)
-- `pidx_annotate` — attach a text note to a field; pinned notes appear in T3 output
+- `pidx_annotate` — attach a text note to a field; pinned notes appear in `rich` output
 - `pidx_decay` — run a decay pass; flags low-confidence obs to the review queue
 
 ## Bridge packet format (minimal example)

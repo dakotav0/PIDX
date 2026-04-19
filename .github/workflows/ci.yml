@@ -18,6 +18,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: cargo audit
+
       - name: Build (excluding Tauri UI)
         run: cargo build --workspace --exclude pidx-ui
 
@@ -28,6 +37,7 @@ jobs:
         run: cargo clippy --workspace --exclude pidx-ui -- -D warnings
 
       - name: Check schema drift
+        shell: bash
         run: |
           cargo run --example emit_schema > docs/pidx-schema.json.new
           diff docs/pidx-schema.json docs/pidx-schema.json.new

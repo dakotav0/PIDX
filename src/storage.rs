@@ -120,8 +120,7 @@ impl ProfileStore {
         })?;
 
         let path = self.path_for(&profile.meta.id);
-        let json =
-            serde_json::to_string_pretty(profile).context("serializing profile to JSON")?;
+        let json = serde_json::to_string_pretty(profile).context("serializing profile to JSON")?;
 
         std::fs::write(&path, json)
             .with_context(|| format!("writing profile to {}", path.display()))?;

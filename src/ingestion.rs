@@ -99,9 +99,10 @@ fn route_field<'a>(
         "identity.reasoning.style" => {
             FieldRoute::Field(&mut profile.identity.reasoning.style, FieldClass::Identity)
         }
-        "identity.reasoning.pattern" => {
-            FieldRoute::Field(&mut profile.identity.reasoning.pattern, FieldClass::Identity)
-        }
+        "identity.reasoning.pattern" => FieldRoute::Field(
+            &mut profile.identity.reasoning.pattern,
+            FieldClass::Identity,
+        ),
         "identity.reasoning.intake" => {
             FieldRoute::Field(&mut profile.identity.reasoning.intake, FieldClass::Identity)
         }
@@ -115,8 +116,11 @@ fn route_field<'a>(
                 profile.domains.push(ObservationField::default());
                 (profile.domains.len() - 1, false)
             });
-            if has_proposed { FieldRoute::DedupField(&mut profile.domains[idx]) }
-            else { FieldRoute::Field(&mut profile.domains[idx], FieldClass::Domain) }
+            if has_proposed {
+                FieldRoute::DedupField(&mut profile.domains[idx])
+            } else {
+                FieldRoute::Field(&mut profile.domains[idx], FieldClass::Domain)
+            }
         }
 
         "values" => {
@@ -125,8 +129,11 @@ fn route_field<'a>(
                 profile.values.push(ObservationField::default());
                 (profile.values.len() - 1, false)
             });
-            if has_proposed { FieldRoute::DedupField(&mut profile.values[idx]) }
-            else { FieldRoute::Field(&mut profile.values[idx], FieldClass::Value) }
+            if has_proposed {
+                FieldRoute::DedupField(&mut profile.values[idx])
+            } else {
+                FieldRoute::Field(&mut profile.values[idx], FieldClass::Value)
+            }
         }
 
         "signals.phrases" => {
@@ -135,8 +142,11 @@ fn route_field<'a>(
                 profile.signals.phrases.push(ObservationField::default());
                 (profile.signals.phrases.len() - 1, false)
             });
-            if has_proposed { FieldRoute::DedupField(&mut profile.signals.phrases[idx]) }
-            else { FieldRoute::Field(&mut profile.signals.phrases[idx], FieldClass::Signal) }
+            if has_proposed {
+                FieldRoute::DedupField(&mut profile.signals.phrases[idx])
+            } else {
+                FieldRoute::Field(&mut profile.signals.phrases[idx], FieldClass::Signal)
+            }
         }
         "signals.avoidances" => {
             let match_res = find_matching_field(&profile.signals.avoidances, incoming);
@@ -144,8 +154,11 @@ fn route_field<'a>(
                 profile.signals.avoidances.push(ObservationField::default());
                 (profile.signals.avoidances.len() - 1, false)
             });
-            if has_proposed { FieldRoute::DedupField(&mut profile.signals.avoidances[idx]) }
-            else { FieldRoute::Field(&mut profile.signals.avoidances[idx], FieldClass::Signal) }
+            if has_proposed {
+                FieldRoute::DedupField(&mut profile.signals.avoidances[idx])
+            } else {
+                FieldRoute::Field(&mut profile.signals.avoidances[idx], FieldClass::Signal)
+            }
         }
         "signals.rhythms" => {
             let match_res = find_matching_field(&profile.signals.rhythms, incoming);
@@ -153,8 +166,11 @@ fn route_field<'a>(
                 profile.signals.rhythms.push(ObservationField::default());
                 (profile.signals.rhythms.len() - 1, false)
             });
-            if has_proposed { FieldRoute::DedupField(&mut profile.signals.rhythms[idx]) }
-            else { FieldRoute::Field(&mut profile.signals.rhythms[idx], FieldClass::Signal) }
+            if has_proposed {
+                FieldRoute::DedupField(&mut profile.signals.rhythms[idx])
+            } else {
+                FieldRoute::Field(&mut profile.signals.rhythms[idx], FieldClass::Signal)
+            }
         }
         "signals.framings" => {
             let match_res = find_matching_field(&profile.signals.framings, incoming);
@@ -162,18 +178,17 @@ fn route_field<'a>(
                 profile.signals.framings.push(ObservationField::default());
                 (profile.signals.framings.len() - 1, false)
             });
-            if has_proposed { FieldRoute::DedupField(&mut profile.signals.framings[idx]) }
-            else { FieldRoute::Field(&mut profile.signals.framings[idx], FieldClass::Signal) }
+            if has_proposed {
+                FieldRoute::DedupField(&mut profile.signals.framings[idx])
+            } else {
+                FieldRoute::Field(&mut profile.signals.framings[idx], FieldClass::Signal)
+            }
         }
 
         "working.mode" => FieldRoute::Field(&mut profile.working.mode, FieldClass::Working),
         "working.pace" => FieldRoute::Field(&mut profile.working.pace, FieldClass::Working),
-        "working.feedback" => {
-            FieldRoute::Field(&mut profile.working.feedback, FieldClass::Working)
-        }
-        "working.pattern" => {
-            FieldRoute::Field(&mut profile.working.pattern, FieldClass::Working)
-        }
+        "working.feedback" => FieldRoute::Field(&mut profile.working.feedback, FieldClass::Working),
+        "working.pattern" => FieldRoute::Field(&mut profile.working.pattern, FieldClass::Working),
 
         _ => FieldRoute::Unknown,
     }
@@ -188,10 +203,13 @@ fn route_field<'a>(
 fn parse_value(v: &serde_json::Value) -> Option<ObservationValue> {
     match v {
         serde_json::Value::String(s) => Some(ObservationValue::Text(s.clone())),
+        serde_json::Value::Number(n) => n.as_f64().map(ObservationValue::Number),
         serde_json::Value::Object(_) => {
             // Try to deserialize as DomainEntry. If the object lacks a "label"
             // key this will fail and we return None, skipping the observation.
-            serde_json::from_value(v.clone()).ok().map(ObservationValue::Domain)
+            serde_json::from_value(v.clone())
+                .ok()
+                .map(ObservationValue::Domain)
         }
         _ => None,
     }
@@ -215,6 +233,9 @@ fn values_conflict(existing: &ObservationValue, incoming: &serde_json::Value) ->
                 false
             }
         }
+        (ObservationValue::Number(a), serde_json::Value::Number(b)) => {
+            b.as_f64().map_or(false, |b| (*a - b).abs() > f64::EPSILON)
+        }
         _ => false,
     }
 }
@@ -233,15 +254,25 @@ fn values_match(existing: &ObservationValue, incoming: &serde_json::Value) -> bo
                 false
             }
         }
+        (ObservationValue::Number(a), serde_json::Value::Number(b)) => {
+            b.as_f64().map_or(false, |b| (*a - b).abs() <= f64::EPSILON)
+        }
         _ => false,
     }
 }
 
 /// Scan a list-field slice for an existing slot whose value matches `incoming`.
 /// Returns `Some((index, has_proposed_match))` if found, `None` otherwise.
-fn find_matching_field(fields: &[ObservationField], incoming: &serde_json::Value) -> Option<(usize, bool)> {
+fn find_matching_field(
+    fields: &[ObservationField],
+    incoming: &serde_json::Value,
+) -> Option<(usize, bool)> {
     for (i, field) in fields.iter().enumerate() {
-        if field.observations.iter().any(|o| values_match(&o.value, incoming)) {
+        if field
+            .observations
+            .iter()
+            .any(|o| values_match(&o.value, incoming))
+        {
             let has_proposed = field.observations.iter().any(|o| {
                 o.status == ObservationStatus::Proposed && values_match(&o.value, incoming)
             });
@@ -261,11 +292,7 @@ fn find_matching_field(fields: &[ObservationField], incoming: &serde_json::Value
 /// Uses an exhaustive `match` on `RegisterMetricName` rather than Python's
 /// `hasattr`/`getattr`. If we add a new register dimension later, the compiler
 /// will flag this match as non-exhaustive and force us to handle it.
-fn ingest_evidence(
-    profile: &mut ProfileDocument,
-    bo: &BridgeObservation,
-    _packet: &BridgePacket,
-) {
+fn ingest_evidence(profile: &mut ProfileDocument, bo: &BridgeObservation, _packet: &BridgePacket) {
     // "let-else" — if the pattern doesn't match, execute the else block.
     // The else block must diverge (return, break, continue, or panic).
     // This is the idiomatic Rust alternative to Python's early-return guards.
@@ -367,8 +394,7 @@ pub fn ingest_bridge_packet(
             FieldRoute::Field(field, _field_class) => {
                 // Delta detection: find the first confirmed observation that conflicts.
                 let conflict_idx = field.observations.iter().position(|o| {
-                    o.status == ObservationStatus::Confirmed
-                        && values_conflict(&o.value, &bo.value)
+                    o.status == ObservationStatus::Confirmed && values_conflict(&o.value, &bo.value)
                 });
 
                 if let Some(idx) = conflict_idx {
@@ -519,6 +545,7 @@ fn value_key(v: &ObservationValue) -> String {
     match v {
         ObservationValue::Text(s) => s.trim().to_lowercase(),
         ObservationValue::Domain(d) => d.label.trim().to_lowercase(),
+        ObservationValue::Number(n) => n.to_string(),
     }
 }
 
@@ -534,26 +561,55 @@ pub fn confirm_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<
         let mut v = Vec::new();
         let mut push_if = |path: &str, field: &ObservationField| {
             if path.starts_with(prefix)
-                && field.observations.iter().any(|o| o.status == ObservationStatus::Proposed)
+                && field
+                    .observations
+                    .iter()
+                    .any(|o| o.status == ObservationStatus::Proposed)
             {
                 v.push(path.to_string());
             }
         };
-        for (i, f) in profile.identity.core.iter().enumerate()            { push_if(&format!("identity.core.{i}"), f); }
-        push_if("identity.reasoning.style",   &profile.identity.reasoning.style);
-        push_if("identity.reasoning.pattern", &profile.identity.reasoning.pattern);
-        push_if("identity.reasoning.intake",  &profile.identity.reasoning.intake);
-        push_if("identity.reasoning.stance",  &profile.identity.reasoning.stance);
-        for (i, f) in profile.domains.iter().enumerate()            { push_if(&format!("domains.{i}"), f); }
-        for (i, f) in profile.values.iter().enumerate()             { push_if(&format!("values.{i}"), f); }
-        for (i, f) in profile.signals.phrases.iter().enumerate()    { push_if(&format!("signals.phrases.{i}"), f); }
-        for (i, f) in profile.signals.avoidances.iter().enumerate() { push_if(&format!("signals.avoidances.{i}"), f); }
-        for (i, f) in profile.signals.rhythms.iter().enumerate()    { push_if(&format!("signals.rhythms.{i}"), f); }
-        for (i, f) in profile.signals.framings.iter().enumerate()   { push_if(&format!("signals.framings.{i}"), f); }
-        push_if("working.mode",     &profile.working.mode);
-        push_if("working.pace",     &profile.working.pace);
+        for (i, f) in profile.identity.core.iter().enumerate() {
+            push_if(&format!("identity.core.{i}"), f);
+        }
+        push_if(
+            "identity.reasoning.style",
+            &profile.identity.reasoning.style,
+        );
+        push_if(
+            "identity.reasoning.pattern",
+            &profile.identity.reasoning.pattern,
+        );
+        push_if(
+            "identity.reasoning.intake",
+            &profile.identity.reasoning.intake,
+        );
+        push_if(
+            "identity.reasoning.stance",
+            &profile.identity.reasoning.stance,
+        );
+        for (i, f) in profile.domains.iter().enumerate() {
+            push_if(&format!("domains.{i}"), f);
+        }
+        for (i, f) in profile.values.iter().enumerate() {
+            push_if(&format!("values.{i}"), f);
+        }
+        for (i, f) in profile.signals.phrases.iter().enumerate() {
+            push_if(&format!("signals.phrases.{i}"), f);
+        }
+        for (i, f) in profile.signals.avoidances.iter().enumerate() {
+            push_if(&format!("signals.avoidances.{i}"), f);
+        }
+        for (i, f) in profile.signals.rhythms.iter().enumerate() {
+            push_if(&format!("signals.rhythms.{i}"), f);
+        }
+        for (i, f) in profile.signals.framings.iter().enumerate() {
+            push_if(&format!("signals.framings.{i}"), f);
+        }
+        push_if("working.mode", &profile.working.mode);
+        push_if("working.pace", &profile.working.pace);
         push_if("working.feedback", &profile.working.feedback);
-        push_if("working.pattern",  &profile.working.pattern);
+        push_if("working.pattern", &profile.working.pattern);
         v
     };
 
@@ -569,7 +625,9 @@ pub fn confirm_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<
                     any = true;
                 }
             }
-            if any { confirmed_paths.push(path.clone()); }
+            if any {
+                confirmed_paths.push(path.clone());
+            }
         }
     }
     confirmed_paths
@@ -582,26 +640,55 @@ pub fn reject_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<S
         let mut v = Vec::new();
         let mut push_if = |path: &str, field: &ObservationField| {
             if path.starts_with(prefix)
-                && field.observations.iter().any(|o| o.status == ObservationStatus::Proposed)
+                && field
+                    .observations
+                    .iter()
+                    .any(|o| o.status == ObservationStatus::Proposed)
             {
                 v.push(path.to_string());
             }
         };
-        for (i, f) in profile.identity.core.iter().enumerate()            { push_if(&format!("identity.core.{i}"), f); }
-        push_if("identity.reasoning.style",   &profile.identity.reasoning.style);
-        push_if("identity.reasoning.pattern", &profile.identity.reasoning.pattern);
-        push_if("identity.reasoning.intake",  &profile.identity.reasoning.intake);
-        push_if("identity.reasoning.stance",  &profile.identity.reasoning.stance);
-        for (i, f) in profile.domains.iter().enumerate()            { push_if(&format!("domains.{i}"), f); }
-        for (i, f) in profile.values.iter().enumerate()             { push_if(&format!("values.{i}"), f); }
-        for (i, f) in profile.signals.phrases.iter().enumerate()    { push_if(&format!("signals.phrases.{i}"), f); }
-        for (i, f) in profile.signals.avoidances.iter().enumerate() { push_if(&format!("signals.avoidances.{i}"), f); }
-        for (i, f) in profile.signals.rhythms.iter().enumerate()    { push_if(&format!("signals.rhythms.{i}"), f); }
-        for (i, f) in profile.signals.framings.iter().enumerate()   { push_if(&format!("signals.framings.{i}"), f); }
-        push_if("working.mode",     &profile.working.mode);
-        push_if("working.pace",     &profile.working.pace);
+        for (i, f) in profile.identity.core.iter().enumerate() {
+            push_if(&format!("identity.core.{i}"), f);
+        }
+        push_if(
+            "identity.reasoning.style",
+            &profile.identity.reasoning.style,
+        );
+        push_if(
+            "identity.reasoning.pattern",
+            &profile.identity.reasoning.pattern,
+        );
+        push_if(
+            "identity.reasoning.intake",
+            &profile.identity.reasoning.intake,
+        );
+        push_if(
+            "identity.reasoning.stance",
+            &profile.identity.reasoning.stance,
+        );
+        for (i, f) in profile.domains.iter().enumerate() {
+            push_if(&format!("domains.{i}"), f);
+        }
+        for (i, f) in profile.values.iter().enumerate() {
+            push_if(&format!("values.{i}"), f);
+        }
+        for (i, f) in profile.signals.phrases.iter().enumerate() {
+            push_if(&format!("signals.phrases.{i}"), f);
+        }
+        for (i, f) in profile.signals.avoidances.iter().enumerate() {
+            push_if(&format!("signals.avoidances.{i}"), f);
+        }
+        for (i, f) in profile.signals.rhythms.iter().enumerate() {
+            push_if(&format!("signals.rhythms.{i}"), f);
+        }
+        for (i, f) in profile.signals.framings.iter().enumerate() {
+            push_if(&format!("signals.framings.{i}"), f);
+        }
+        push_if("working.mode", &profile.working.mode);
+        push_if("working.pace", &profile.working.pace);
         push_if("working.feedback", &profile.working.feedback);
-        push_if("working.pattern",  &profile.working.pattern);
+        push_if("working.pattern", &profile.working.pattern);
         v
     };
 
@@ -616,12 +703,13 @@ pub fn reject_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<S
                     any = true;
                 }
             }
-            if any { rejected_paths.push(path.clone()); }
+            if any {
+                rejected_paths.push(path.clone());
+            }
         }
     }
     rejected_paths
 }
-
 
 /// Minimal path-resolver for the confirm-all operation. Mirrors the CLI's
 /// `resolve_field_mut` but lives in the library so Tauri can share it.
@@ -633,29 +721,29 @@ fn resolve_field_for_confirm<'a>(
     match parts.as_slice() {
         ["identity", "core", rest] => profile.identity.core.get_mut(rest.parse::<usize>().ok()?),
         ["identity", "reasoning", name] => match *name {
-            "style"   => Some(&mut profile.identity.reasoning.style),
+            "style" => Some(&mut profile.identity.reasoning.style),
             "pattern" => Some(&mut profile.identity.reasoning.pattern),
-            "intake"  => Some(&mut profile.identity.reasoning.intake),
-            "stance"  => Some(&mut profile.identity.reasoning.stance),
+            "intake" => Some(&mut profile.identity.reasoning.intake),
+            "stance" => Some(&mut profile.identity.reasoning.stance),
             _ => None,
         },
-        ["domains",  idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
-        ["values",   idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
+        ["domains", idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
+        ["values", idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
         ["signals", cat, idx] => {
             let i: usize = idx.parse().ok()?;
             match *cat {
-                "phrases"    => profile.signals.phrases.get_mut(i),
+                "phrases" => profile.signals.phrases.get_mut(i),
                 "avoidances" => profile.signals.avoidances.get_mut(i),
-                "rhythms"    => profile.signals.rhythms.get_mut(i),
-                "framings"   => profile.signals.framings.get_mut(i),
+                "rhythms" => profile.signals.rhythms.get_mut(i),
+                "framings" => profile.signals.framings.get_mut(i),
                 _ => None,
             }
         }
         ["working", name] => match *name {
-            "mode"     => Some(&mut profile.working.mode),
-            "pace"     => Some(&mut profile.working.pace),
+            "mode" => Some(&mut profile.working.mode),
+            "pace" => Some(&mut profile.working.pace),
             "feedback" => Some(&mut profile.working.feedback),
-            "pattern"  => Some(&mut profile.working.pattern),
+            "pattern" => Some(&mut profile.working.pattern),
             _ => None,
         },
         _ => None,
@@ -685,7 +773,9 @@ pub fn run_decay_pass(profile: &mut ProfileDocument, threshold: f64) -> usize {
 
         let scan = |v: &mut Vec<_>, path: &str, field: &ObservationField, fc: FieldClass| {
             for (idx, obs) in field.observations.iter().enumerate() {
-                if obs.status != ObservationStatus::Confirmed || obs.decay_exempt { continue; }
+                if obs.status != ObservationStatus::Confirmed || obs.decay_exempt {
+                    continue;
+                }
                 let c = obs.effective_confidence(fc, Some(now));
                 if c < threshold {
                     v.push((path.to_string(), idx, c));
@@ -695,36 +785,117 @@ pub fn run_decay_pass(profile: &mut ProfileDocument, threshold: f64) -> usize {
 
         // Identity
         for (i, f) in profile.identity.core.iter().enumerate() {
-            scan(&mut v, &format!("identity.core.{i}"), f, FieldClass::Identity);
+            scan(
+                &mut v,
+                &format!("identity.core.{i}"),
+                f,
+                FieldClass::Identity,
+            );
         }
-        scan(&mut v, "identity.reasoning.style",   &profile.identity.reasoning.style,   FieldClass::Identity);
-        scan(&mut v, "identity.reasoning.pattern", &profile.identity.reasoning.pattern, FieldClass::Identity);
-        scan(&mut v, "identity.reasoning.intake",  &profile.identity.reasoning.intake,  FieldClass::Identity);
-        scan(&mut v, "identity.reasoning.stance",  &profile.identity.reasoning.stance,  FieldClass::Identity);
+        scan(
+            &mut v,
+            "identity.reasoning.style",
+            &profile.identity.reasoning.style,
+            FieldClass::Identity,
+        );
+        scan(
+            &mut v,
+            "identity.reasoning.pattern",
+            &profile.identity.reasoning.pattern,
+            FieldClass::Identity,
+        );
+        scan(
+            &mut v,
+            "identity.reasoning.intake",
+            &profile.identity.reasoning.intake,
+            FieldClass::Identity,
+        );
+        scan(
+            &mut v,
+            "identity.reasoning.stance",
+            &profile.identity.reasoning.stance,
+            FieldClass::Identity,
+        );
         // Domains / Values
-        for (i, f) in profile.domains.iter().enumerate() { scan(&mut v, &format!("domains.{i}"), f, FieldClass::Domain); }
-        for (i, f) in profile.values.iter().enumerate()  { scan(&mut v, &format!("values.{i}"),  f, FieldClass::Value); }
+        for (i, f) in profile.domains.iter().enumerate() {
+            scan(&mut v, &format!("domains.{i}"), f, FieldClass::Domain);
+        }
+        for (i, f) in profile.values.iter().enumerate() {
+            scan(&mut v, &format!("values.{i}"), f, FieldClass::Value);
+        }
         // Signals
-        for (i, f) in profile.signals.phrases.iter().enumerate()    { scan(&mut v, &format!("signals.phrases.{i}"),    f, FieldClass::Signal); }
-        for (i, f) in profile.signals.avoidances.iter().enumerate() { scan(&mut v, &format!("signals.avoidances.{i}"), f, FieldClass::Signal); }
-        for (i, f) in profile.signals.rhythms.iter().enumerate()    { scan(&mut v, &format!("signals.rhythms.{i}"),    f, FieldClass::Signal); }
-        for (i, f) in profile.signals.framings.iter().enumerate()   { scan(&mut v, &format!("signals.framings.{i}"),   f, FieldClass::Signal); }
+        for (i, f) in profile.signals.phrases.iter().enumerate() {
+            scan(
+                &mut v,
+                &format!("signals.phrases.{i}"),
+                f,
+                FieldClass::Signal,
+            );
+        }
+        for (i, f) in profile.signals.avoidances.iter().enumerate() {
+            scan(
+                &mut v,
+                &format!("signals.avoidances.{i}"),
+                f,
+                FieldClass::Signal,
+            );
+        }
+        for (i, f) in profile.signals.rhythms.iter().enumerate() {
+            scan(
+                &mut v,
+                &format!("signals.rhythms.{i}"),
+                f,
+                FieldClass::Signal,
+            );
+        }
+        for (i, f) in profile.signals.framings.iter().enumerate() {
+            scan(
+                &mut v,
+                &format!("signals.framings.{i}"),
+                f,
+                FieldClass::Signal,
+            );
+        }
         // Working
-        scan(&mut v, "working.mode",     &profile.working.mode,     FieldClass::Working);
-        scan(&mut v, "working.pace",     &profile.working.pace,     FieldClass::Working);
-        scan(&mut v, "working.feedback", &profile.working.feedback, FieldClass::Working);
-        scan(&mut v, "working.pattern",  &profile.working.pattern,  FieldClass::Working);
+        scan(
+            &mut v,
+            "working.mode",
+            &profile.working.mode,
+            FieldClass::Working,
+        );
+        scan(
+            &mut v,
+            "working.pace",
+            &profile.working.pace,
+            FieldClass::Working,
+        );
+        scan(
+            &mut v,
+            "working.feedback",
+            &profile.working.feedback,
+            FieldClass::Working,
+        );
+        scan(
+            &mut v,
+            "working.pattern",
+            &profile.working.pattern,
+            FieldClass::Working,
+        );
 
         v
     };
     // All &ObservationField borrows released here. ─────────────────────────────
 
     // Remove candidates already in the review queue as unresolved.
-    let to_flag: Vec<_> = candidates.into_iter().filter(|(path, idx, _)| {
-        !profile.review_queue.iter().any(|r| {
-            !r.resolved && r.field == *path && r.observation_index == *idx
+    let to_flag: Vec<_> = candidates
+        .into_iter()
+        .filter(|(path, idx, _)| {
+            !profile
+                .review_queue
+                .iter()
+                .any(|r| !r.resolved && r.field == *path && r.observation_index == *idx)
         })
-    }).collect();
+        .collect();
 
     let count = to_flag.len();
     for (path, obs_idx, eff_conf) in to_flag {
@@ -870,8 +1041,16 @@ mod tests {
             }],
         };
 
-        ingest_bridge_packet(&mut profile, &make_packet("local:gemma3:4b", "s1"), "s1.bridge.json");
-        ingest_bridge_packet(&mut profile, &make_packet("local:llama3:8b", "s2"), "s2.bridge.json");
+        ingest_bridge_packet(
+            &mut profile,
+            &make_packet("local:gemma3:4b", "s1"),
+            "s1.bridge.json",
+        );
+        ingest_bridge_packet(
+            &mut profile,
+            &make_packet("local:llama3:8b", "s2"),
+            "s2.bridge.json",
+        );
 
         // Manually confirm both (simulating user review pass).
         for obs in &mut profile.identity.reasoning.style.observations {
