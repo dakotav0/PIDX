@@ -19,4 +19,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
-notify = "6"
+notify = "8"
