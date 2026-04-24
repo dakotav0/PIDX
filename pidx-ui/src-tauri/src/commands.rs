@@ -29,8 +29,8 @@ use tracing::{info, warn};
 use pidx::models::profile::ProfileDocument;
 use pidx::output::Tier;
 use pidx::{
-    confirm_all_proposed, reject_all_proposed, ingest_bridge_packet, render_tier_output, run_corroboration,
-    run_decay_pass, ProfileStore,
+    confirm_all_proposed, ingest_bridge_packet, reject_all_proposed, render_tier_output,
+    run_corroboration, run_decay_pass, ProfileStore,
 };
 
 // ── Shared app state ─────────────────────────────────────────────────────────
@@ -217,14 +217,26 @@ pub async fn get_status(
         // Walk all fields in the same order as the CLI `all_fields` helper
         let mut summaries = Vec::new();
         let field_iter: Vec<(&str, &pidx::models::observation::ObservationField)> = vec![
-            ("working.mode",             &profile.working.mode),
-            ("working.pace",             &profile.working.pace),
-            ("working.feedback",         &profile.working.feedback),
-            ("working.pattern",          &profile.working.pattern),
-            ("identity.reasoning.style",   &profile.identity.reasoning.style),
-            ("identity.reasoning.pattern", &profile.identity.reasoning.pattern),
-            ("identity.reasoning.intake",  &profile.identity.reasoning.intake),
-            ("identity.reasoning.stance",  &profile.identity.reasoning.stance),
+            ("working.mode", &profile.working.mode),
+            ("working.pace", &profile.working.pace),
+            ("working.feedback", &profile.working.feedback),
+            ("working.pattern", &profile.working.pattern),
+            (
+                "identity.reasoning.style",
+                &profile.identity.reasoning.style,
+            ),
+            (
+                "identity.reasoning.pattern",
+                &profile.identity.reasoning.pattern,
+            ),
+            (
+                "identity.reasoning.intake",
+                &profile.identity.reasoning.intake,
+            ),
+            (
+                "identity.reasoning.stance",
+                &profile.identity.reasoning.stance,
+            ),
         ];
 
         for (path, field) in field_iter {
@@ -263,13 +275,13 @@ pub async fn get_status(
                 }
             };
         }
-        push_list!(profile.identity.core,       "identity.core");
-        push_list!(profile.domains,             "domains");
-        push_list!(profile.values,              "values");
-        push_list!(profile.signals.phrases,     "signals.phrases");
-        push_list!(profile.signals.avoidances,  "signals.avoidances");
-        push_list!(profile.signals.rhythms,     "signals.rhythms");
-        push_list!(profile.signals.framings,    "signals.framings");
+        push_list!(profile.identity.core, "identity.core");
+        push_list!(profile.domains, "domains");
+        push_list!(profile.values, "values");
+        push_list!(profile.signals.phrases, "signals.phrases");
+        push_list!(profile.signals.avoidances, "signals.avoidances");
+        push_list!(profile.signals.rhythms, "signals.rhythms");
+        push_list!(profile.signals.framings, "signals.framings");
 
         summaries
     };
@@ -402,12 +414,23 @@ pub async fn resolve_delta(
             .iter()
             .find(|d| d.id == delta_id && !d.resolved)
             .ok_or_else(|| format!("no open delta with id '{delta_id}'"))?;
-        let (keep_obs, reject_obs) = if keep == "a" { (&d.a, &d.b) } else { (&d.b, &d.a) };
-        (d.field.clone(), keep_obs.source.session_ref.clone(), reject_obs.source.session_ref.clone())
+        let (keep_obs, reject_obs) = if keep == "a" {
+            (&d.a, &d.b)
+        } else {
+            (&d.b, &d.a)
+        };
+        (
+            d.field.clone(),
+            keep_obs.source.session_ref.clone(),
+            reject_obs.source.session_ref.clone(),
+        )
     };
 
     for d in profile.delta_queue.iter_mut() {
-        if d.id == delta_id { d.resolved = true; break; }
+        if d.id == delta_id {
+            d.resolved = true;
+            break;
+        }
     }
 
     if let Some(field) = resolve_field_mut(&mut profile, &field_path) {
@@ -436,7 +459,10 @@ pub async fn confirm_all(
     field_prefix: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let mut profile = state.store.load_or_create(&user_id).map_err(|e| e.to_string())?;
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
     let confirmed_fields = confirm_all_proposed(&mut profile, &field_prefix);
     let count = confirmed_fields.len();
     if count > 0 {
@@ -455,7 +481,10 @@ pub async fn reject_all(
     field_prefix: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let mut profile = state.store.load_or_create(&user_id).map_err(|e| e.to_string())?;
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
     let rejected_fields = reject_all_proposed(&mut profile, &field_prefix);
     let count = rejected_fields.len();
     if count > 0 {
@@ -473,7 +502,10 @@ pub async fn clear(
     target: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let mut profile = state.store.load_or_create(&user_id).map_err(|e| e.to_string())?;
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
     let mut cleared_count = 0;
 
     if target == "deltas" || target == "all" {
@@ -508,7 +540,10 @@ pub async fn annotate(
 ) -> Result<serde_json::Value, String> {
     use pidx::models::profile::{Annotation, ProfileMeta};
 
-    let mut profile = state.store.load_or_create(&user_id).map_err(|e| e.to_string())?;
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
 
     if resolve_field_mut(&mut profile, &field).is_none() {
         return Err(format!("unknown field path '{field}'"));
@@ -539,7 +574,10 @@ pub async fn decay(
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let threshold = threshold.unwrap_or(0.30);
-    let mut profile = state.store.load_or_create(&user_id).map_err(|e| e.to_string())?;
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
     let newly_flagged = run_decay_pass(&mut profile, threshold);
     if newly_flagged > 0 {
         profile.recompute_overall_confidence();
@@ -554,6 +592,82 @@ pub async fn decay(
         "newly_flagged": newly_flagged,
         "review_queue_pending": pending,
     }))
+}
+
+/// Ingest a bridge packet supplied as a JSON string (UI-authored, no file needed).
+#[tauri::command]
+pub async fn ingest_packet_content(
+    user_id: String,
+    packet_json: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::models::bridge::BridgePacket;
+
+    let packet: BridgePacket =
+        serde_json::from_str(&packet_json).map_err(|e| format!("invalid bridge packet: {e}"))?;
+
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
+    let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, "ui-authored");
+    run_corroboration(&mut profile);
+    state.store.save(&mut profile).map_err(|e| e.to_string())?;
+    invalidate(&state, &user_id).await;
+
+    info!(user_id, proposed, deltas, "ingest_packet_content");
+    Ok(
+        serde_json::json!({ "ok": true, "observations_proposed": proposed, "deltas_flagged": deltas }),
+    )
+}
+
+/// Resolve a decayed observation from the review queue.
+///
+/// `action` is `"keep"` (leave the observation as-is, dismiss the review item)
+/// or `"discard"` (archive the observation and dismiss the review item).
+#[tauri::command]
+pub async fn resolve_review(
+    user_id: String,
+    review_id: String,
+    action: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::models::observation::ObservationStatus;
+
+    let mut profile = state
+        .store
+        .load_or_create(&user_id)
+        .map_err(|e| e.to_string())?;
+
+    let (field, obs_index) = {
+        let item = profile
+            .review_queue
+            .iter()
+            .find(|r| r.id == review_id && !r.resolved)
+            .ok_or_else(|| format!("no open review with id '{review_id}'"))?;
+        (item.field.clone(), item.observation_index)
+    };
+
+    for r in profile.review_queue.iter_mut() {
+        if r.id == review_id {
+            r.resolved = true;
+            break;
+        }
+    }
+
+    if action == "discard" {
+        if let Some(field_ref) = resolve_field_mut(&mut profile, &field) {
+            if let Some(obs) = field_ref.observations.get_mut(obs_index) {
+                obs.status = ObservationStatus::Archived;
+            }
+        }
+    }
+
+    state.store.save(&mut profile).map_err(|e| e.to_string())?;
+    invalidate(&state, &user_id).await;
+    info!(user_id, review_id, action, "resolve_review");
+
+    Ok(serde_json::json!({ "ok": true, "review_id": review_id, "action": action, "field": field }))
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -587,10 +701,10 @@ fn resolve_field_mut<'a>(
             profile.identity.core.get_mut(idx)
         }
         ["identity", "reasoning", name] => match *name {
-            "style"   => Some(&mut profile.identity.reasoning.style),
+            "style" => Some(&mut profile.identity.reasoning.style),
             "pattern" => Some(&mut profile.identity.reasoning.pattern),
-            "intake"  => Some(&mut profile.identity.reasoning.intake),
-            "stance"  => Some(&mut profile.identity.reasoning.stance),
+            "intake" => Some(&mut profile.identity.reasoning.intake),
+            "stance" => Some(&mut profile.identity.reasoning.stance),
             _ => None,
         },
         ["domains", idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
@@ -598,10 +712,10 @@ fn resolve_field_mut<'a>(
         ["signals", cat, idx] => {
             let idx: usize = idx.parse().ok()?;
             match *cat {
-                "phrases"    => profile.signals.phrases.get_mut(idx),
+                "phrases" => profile.signals.phrases.get_mut(idx),
                 "avoidances" => profile.signals.avoidances.get_mut(idx),
-                "rhythms"    => profile.signals.rhythms.get_mut(idx),
-                "framings"   => profile.signals.framings.get_mut(idx),
+                "rhythms" => profile.signals.rhythms.get_mut(idx),
+                "framings" => profile.signals.framings.get_mut(idx),
                 _ => None,
             }
         }

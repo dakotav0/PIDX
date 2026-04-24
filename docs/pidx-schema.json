@@ -430,6 +430,10 @@
         },
         {
           "$ref": "#/definitions/DomainEntry"
+        },
+        {
+          "format": "double",
+          "type": "number"
         }
       ],
       "description": "All concrete types an observation value can hold.\n\n## Why an enum instead of a generic Observation<T>?\n\nPython's `Observation[T]` works because Pydantic erases the generic at runtime — all it needs is a JSON blob. Rust generics are monomorphized: `Observation<String>` and `Observation<DomainEntry>` are different types with no common base, so you can't store them in the same `Vec`.\n\nAn enum is the idiomatic Rust alternative. It's a \"sum type\" — a value that is exactly one of its variants at runtime. The compiler knows every possible shape, and a `match` on it is exhaustive: add a new variant here and every `match ObservationValue { ... }` in the codebase becomes a compile error until you handle it.\n\n`#[serde(untagged)]` tells serde to serialize/deserialize the inner value directly without a wrapper key. `Text(\"hello\")` → `\"hello\"` in JSON. `Domain(DomainEntry { .. })` → `{\"label\": \"...\", \"weight\": 1.0}`. This matches the Python output exactly."

@@ -30,8 +30,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use pidx::{
-    confirm_all_proposed, reject_all_proposed, ingest_bridge_packet, render_tier_output, run_corroboration,
-    run_decay_pass, ProfileStore,
+    confirm_all_proposed, ingest_bridge_packet, reject_all_proposed, render_tier_output,
+    run_corroboration, run_decay_pass, ProfileStore,
 };
 
 // ── Tool input structs ────────────────────────────────────────────────────────
@@ -47,13 +47,13 @@ pub struct PidxListTool {}
 /// Retrieve a tier-scaled context block for a user.
 #[macros::mcp_tool(
     name = "pidx_show",
-    description = "Return a formatted context block for a user scaled to the requested tier (T1=minimal, T2=standard, T3=full). T1 fits in small context windows; T3 includes all confirmed observations."
+    description = "Return a formatted context block for a user scaled to the requested tier. nano (~180t): identity core only. micro (~550t): + register + working basics. standard (~1400t): + domains/values/reasoning/full working. rich (~3200t): + signals/annotations/conflicts."
 )]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PidxShowTool {
-    /// User ID (e.g. `test_user` or `dakota`)
+    /// User ID (e.g. `dakota` or `kotaraine`)
     pub user_id: String,
-    /// Output tier: `T1`, `T2`, or `T3`
+    /// Output tier: `nano`, `micro`, `standard`, or `rich`
     pub tier: String,
 }
 
@@ -246,24 +246,27 @@ pub struct PidxDecayTool {
 }
 
 // Register all tools — generates `PidxTools` enum + `PidxTools::tools()` vec
-tool_box!(PidxTools, [
-    PidxListTool,
-    PidxShowTool,
-    PidxStatusTool,
-    PidxIngestTool,
-    PidxConfirmTool,
-    PidxRejectTool,
-    PidxConfirmAllTool,
-    PidxRejectAllTool,
-    PidxClearTool,
-    PidxDeltaListTool,
-    PidxDeltaResolveTool,
-    PidxReviewListTool,
-    PidxReviewProcessTool,
-    PidxAnnotateTool,
-    PidxDiffTool,
-    PidxDecayTool
-]);
+tool_box!(
+    PidxTools,
+    [
+        PidxListTool,
+        PidxShowTool,
+        PidxStatusTool,
+        PidxIngestTool,
+        PidxConfirmTool,
+        PidxRejectTool,
+        PidxConfirmAllTool,
+        PidxRejectAllTool,
+        PidxClearTool,
+        PidxDeltaListTool,
+        PidxDeltaResolveTool,
+        PidxReviewListTool,
+        PidxReviewProcessTool,
+        PidxAnnotateTool,
+        PidxDiffTool,
+        PidxDecayTool
+    ]
+);
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
@@ -306,22 +309,22 @@ impl ServerHandler for PidxHandler {
             .map_err(|_| CallToolError::unknown_tool(params.name.clone()))?;
 
         match tool {
-            PidxTools::PidxListTool(_)           => self.handle_list().await,
-            PidxTools::PidxShowTool(t)           => self.handle_show(t).await,
-            PidxTools::PidxStatusTool(t)         => self.handle_status(t).await,
-            PidxTools::PidxIngestTool(t)         => self.handle_ingest(t).await,
-            PidxTools::PidxConfirmTool(t)        => self.handle_confirm(t).await,
-            PidxTools::PidxRejectTool(t)         => self.handle_reject(t).await,
-            PidxTools::PidxConfirmAllTool(t)     => self.handle_confirm_all(t).await,
-            PidxTools::PidxRejectAllTool(t)      => self.handle_reject_all(t).await,
-            PidxTools::PidxClearTool(t)          => self.handle_clear(t).await,
-            PidxTools::PidxDeltaListTool(t)      => self.handle_delta_list(t).await,
-            PidxTools::PidxDeltaResolveTool(t)   => self.handle_delta_resolve(t).await,
-            PidxTools::PidxReviewListTool(t)     => self.handle_review_list(t).await,
-            PidxTools::PidxReviewProcessTool(t)  => self.handle_review_process(t).await,
-            PidxTools::PidxAnnotateTool(t)       => self.handle_annotate(t).await,
-            PidxTools::PidxDiffTool(t)           => self.handle_diff(t).await,
-            PidxTools::PidxDecayTool(t)          => self.handle_decay(t).await,
+            PidxTools::PidxListTool(_) => self.handle_list().await,
+            PidxTools::PidxShowTool(t) => self.handle_show(t).await,
+            PidxTools::PidxStatusTool(t) => self.handle_status(t).await,
+            PidxTools::PidxIngestTool(t) => self.handle_ingest(t).await,
+            PidxTools::PidxConfirmTool(t) => self.handle_confirm(t).await,
+            PidxTools::PidxRejectTool(t) => self.handle_reject(t).await,
+            PidxTools::PidxConfirmAllTool(t) => self.handle_confirm_all(t).await,
+            PidxTools::PidxRejectAllTool(t) => self.handle_reject_all(t).await,
+            PidxTools::PidxClearTool(t) => self.handle_clear(t).await,
+            PidxTools::PidxDeltaListTool(t) => self.handle_delta_list(t).await,
+            PidxTools::PidxDeltaResolveTool(t) => self.handle_delta_resolve(t).await,
+            PidxTools::PidxReviewListTool(t) => self.handle_review_list(t).await,
+            PidxTools::PidxReviewProcessTool(t) => self.handle_review_process(t).await,
+            PidxTools::PidxAnnotateTool(t) => self.handle_annotate(t).await,
+            PidxTools::PidxDiffTool(t) => self.handle_diff(t).await,
+            PidxTools::PidxDecayTool(t) => self.handle_decay(t).await,
         }
     }
 }
@@ -338,7 +341,7 @@ fn tool_err(msg: impl std::fmt::Display) -> CallToolError {
 /// Serialize a value to pretty JSON and wrap in a text content result.
 fn json_text(val: &serde_json::Value) -> ToolResult {
     Ok(CallToolResult::text_content(vec![
-        serde_json::to_string_pretty(val).unwrap_or_default().into()
+        serde_json::to_string_pretty(val).unwrap_or_default().into(),
     ]))
 }
 
@@ -369,7 +372,10 @@ impl PidxHandler {
             }
         }
         users.sort_by(|a, b| {
-            a["user_id"].as_str().unwrap_or("").cmp(b["user_id"].as_str().unwrap_or(""))
+            a["user_id"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["user_id"].as_str().unwrap_or(""))
         });
 
         info!(count = users.len(), "pidx_list");
@@ -394,41 +400,83 @@ impl PidxHandler {
         let mut summaries: Vec<serde_json::Value> = Vec::new();
 
         let scalar_fields: &[(&str, &pidx::models::observation::ObservationField)] = &[
-            ("working.mode",               &profile.working.mode),
-            ("working.pace",               &profile.working.pace),
-            ("working.feedback",           &profile.working.feedback),
-            ("working.pattern",            &profile.working.pattern),
-            ("identity.reasoning.style",   &profile.identity.reasoning.style),
-            ("identity.reasoning.pattern", &profile.identity.reasoning.pattern),
-            ("identity.reasoning.intake",  &profile.identity.reasoning.intake),
-            ("identity.reasoning.stance",  &profile.identity.reasoning.stance),
+            ("working.mode", &profile.working.mode),
+            ("working.pace", &profile.working.pace),
+            ("working.feedback", &profile.working.feedback),
+            ("working.pattern", &profile.working.pattern),
+            (
+                "identity.reasoning.style",
+                &profile.identity.reasoning.style,
+            ),
+            (
+                "identity.reasoning.pattern",
+                &profile.identity.reasoning.pattern,
+            ),
+            (
+                "identity.reasoning.intake",
+                &profile.identity.reasoning.intake,
+            ),
+            (
+                "identity.reasoning.stance",
+                &profile.identity.reasoning.stance,
+            ),
         ];
 
         for (path, field) in scalar_fields {
-            if field.observations.is_empty() { continue; }
-            let c = field.observations.iter().filter(|o| o.status == ObservationStatus::Confirmed).count();
-            let p = field.observations.iter().filter(|o| o.status == ObservationStatus::Proposed).count();
-            let d = field.observations.iter().filter(|o| o.status == ObservationStatus::Delta).count();
-            summaries.push(serde_json::json!({ "path": path, "confirmed": c, "proposed": p, "delta": d }));
+            if field.observations.is_empty() {
+                continue;
+            }
+            let c = field
+                .observations
+                .iter()
+                .filter(|o| o.status == ObservationStatus::Confirmed)
+                .count();
+            let p = field
+                .observations
+                .iter()
+                .filter(|o| o.status == ObservationStatus::Proposed)
+                .count();
+            let d = field
+                .observations
+                .iter()
+                .filter(|o| o.status == ObservationStatus::Delta)
+                .count();
+            summaries.push(
+                serde_json::json!({ "path": path, "confirmed": c, "proposed": p, "delta": d }),
+            );
         }
 
         // List fields
         let list_fields: &[(&str, &[pidx::models::observation::ObservationField])] = &[
-            ("identity.core",       &profile.identity.core),
-            ("domains",             &profile.domains),
-            ("values",              &profile.values),
-            ("signals.phrases",     &profile.signals.phrases),
-            ("signals.avoidances",  &profile.signals.avoidances),
-            ("signals.rhythms",     &profile.signals.rhythms),
-            ("signals.framings",    &profile.signals.framings),
+            ("identity.core", &profile.identity.core),
+            ("domains", &profile.domains),
+            ("values", &profile.values),
+            ("signals.phrases", &profile.signals.phrases),
+            ("signals.avoidances", &profile.signals.avoidances),
+            ("signals.rhythms", &profile.signals.rhythms),
+            ("signals.framings", &profile.signals.framings),
         ];
 
         for (base, slice) in list_fields {
             for (i, f) in slice.iter().enumerate() {
-                if f.observations.is_empty() { continue; }
-                let c = f.observations.iter().filter(|o| o.status == ObservationStatus::Confirmed).count();
-                let p = f.observations.iter().filter(|o| o.status == ObservationStatus::Proposed).count();
-                let d = f.observations.iter().filter(|o| o.status == ObservationStatus::Delta).count();
+                if f.observations.is_empty() {
+                    continue;
+                }
+                let c = f
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Confirmed)
+                    .count();
+                let p = f
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Proposed)
+                    .count();
+                let d = f
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Delta)
+                    .count();
                 summaries.push(serde_json::json!({
                     "path": format!("{base}.{i}"),
                     "confirmed": c, "proposed": p, "delta": d
@@ -482,7 +530,10 @@ impl PidxHandler {
         let idx = t.index as usize;
         let obs = resolve_obs_mut(&mut profile, &t.field, idx).map_err(tool_err)?;
         if obs.status != ObservationStatus::Proposed {
-            return Err(tool_err(format!("observation is {:?}, not Proposed", obs.status)));
+            return Err(tool_err(format!(
+                "observation is {:?}, not Proposed",
+                obs.status
+            )));
         }
         let val = format!("{:?}", obs.value);
         obs.status = ObservationStatus::Confirmed;
@@ -505,7 +556,10 @@ impl PidxHandler {
         let idx = t.index as usize;
         let obs = resolve_obs_mut(&mut profile, &t.field, idx).map_err(tool_err)?;
         if obs.status != ObservationStatus::Proposed {
-            return Err(tool_err(format!("observation is {:?}, not Proposed", obs.status)));
+            return Err(tool_err(format!(
+                "observation is {:?}, not Proposed",
+                obs.status
+            )));
         }
         obs.status = ObservationStatus::Rejected;
 
@@ -579,23 +633,27 @@ impl PidxHandler {
 
     async fn handle_delta_list(&self, t: PidxDeltaListTool) -> ToolResult {
         let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
-        let items: Vec<serde_json::Value> = profile.delta_queue.iter()
+        let items: Vec<serde_json::Value> = profile
+            .delta_queue
+            .iter()
             .filter(|d| !d.resolved)
-            .map(|d| serde_json::json!({
-                "id": d.id,
-                "field": d.field,
-                "created_at": d.created_at,
-                "a": {
-                    "session_ref": d.a.source.session_ref,
-                    "value": format!("{:?}", d.a.value),
-                    "confidence": d.a.confidence,
-                },
-                "b": {
-                    "session_ref": d.b.source.session_ref,
-                    "value": format!("{:?}", d.b.value),
-                    "confidence": d.b.confidence,
-                },
-            }))
+            .map(|d| {
+                serde_json::json!({
+                    "id": d.id,
+                    "field": d.field,
+                    "created_at": d.created_at,
+                    "a": {
+                        "session_ref": d.a.source.session_ref,
+                        "value": format!("{:?}", d.a.value),
+                        "confidence": d.a.confidence,
+                    },
+                    "b": {
+                        "session_ref": d.b.source.session_ref,
+                        "value": format!("{:?}", d.b.value),
+                        "confidence": d.b.confidence,
+                    },
+                })
+            })
             .collect();
         info!(user_id = %t.user_id, count = items.len(), "pidx_delta_list");
         json_text(&serde_json::json!({ "user_id": t.user_id, "deltas": items }))
@@ -611,15 +669,24 @@ impl PidxHandler {
         let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
 
         // Borrow-split: collect what we need, release immutable borrow.
-        let found = profile.delta_queue.iter().find(|d| d.id == t.delta_id && !d.resolved)
-            .map(|d| (
-                d.field.clone(),
-                d.a.source.session_ref.clone(),
-                d.b.source.session_ref.clone(),
-            ));
+        let found = profile
+            .delta_queue
+            .iter()
+            .find(|d| d.id == t.delta_id && !d.resolved)
+            .map(|d| {
+                (
+                    d.field.clone(),
+                    d.a.source.session_ref.clone(),
+                    d.b.source.session_ref.clone(),
+                )
+            });
 
-        let (field_path, session_a, session_b) = found
-            .ok_or_else(|| tool_err(format!("delta '{}' not found or already resolved", t.delta_id)))?;
+        let (field_path, session_a, session_b) = found.ok_or_else(|| {
+            tool_err(format!(
+                "delta '{}' not found or already resolved",
+                t.delta_id
+            ))
+        })?;
 
         let (keep_session, reject_session) = if t.keep == "a" {
             (session_a, session_b)
@@ -634,7 +701,11 @@ impl PidxHandler {
 
         // Flip observation statuses in the actual field.
         if let Some(field) = resolve_field_mut(&mut profile, &field_path) {
-            for obs in field.observations.iter_mut().filter(|o| o.status == ObservationStatus::Delta) {
+            for obs in field
+                .observations
+                .iter_mut()
+                .filter(|o| o.status == ObservationStatus::Delta)
+            {
                 if obs.source.session_ref == keep_session {
                     obs.status = ObservationStatus::Confirmed;
                 } else if obs.source.session_ref == reject_session {
@@ -656,15 +727,19 @@ impl PidxHandler {
 
     async fn handle_review_list(&self, t: PidxReviewListTool) -> ToolResult {
         let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
-        let items: Vec<serde_json::Value> = profile.review_queue.iter()
+        let items: Vec<serde_json::Value> = profile
+            .review_queue
+            .iter()
             .filter(|r| !r.resolved)
-            .map(|r| serde_json::json!({
-                "id": r.id,
-                "field": r.field,
-                "index": r.observation_index,
-                "effective_confidence": r.effective_confidence,
-                "flagged_at": r.flagged_at,
-            }))
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "field": r.field,
+                    "index": r.observation_index,
+                    "effective_confidence": r.effective_confidence,
+                    "flagged_at": r.flagged_at,
+                })
+            })
             .collect();
         info!(user_id = %t.user_id, count = items.len(), "pidx_review_list");
         json_text(&serde_json::json!({ "user_id": t.user_id, "review_items": items }))
@@ -680,15 +755,25 @@ impl PidxHandler {
         let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
 
         // Borrow-split: collect field + index, release borrow.
-        let found = profile.review_queue.iter()
+        let found = profile
+            .review_queue
+            .iter()
             .find(|r| r.id == t.review_id && !r.resolved)
             .map(|r| (r.field.clone(), r.observation_index));
 
-        let (field_path, obs_idx) = found
-            .ok_or_else(|| tool_err(format!("review item '{}' not found or already resolved", t.review_id)))?;
+        let (field_path, obs_idx) = found.ok_or_else(|| {
+            tool_err(format!(
+                "review item '{}' not found or already resolved",
+                t.review_id
+            ))
+        })?;
 
         // Mark resolved.
-        if let Some(r) = profile.review_queue.iter_mut().find(|r| r.id == t.review_id) {
+        if let Some(r) = profile
+            .review_queue
+            .iter_mut()
+            .find(|r| r.id == t.review_id)
+        {
             r.resolved = true;
         }
 
@@ -780,15 +865,27 @@ impl PidxHandler {
         });
 
         // Core identity — surface confirmed text observations
-        let core_a: Vec<serde_json::Value> = profile_a.identity.core.iter()
-            .filter_map(|f| f.observations.iter()
-                .find(|o| o.status == ObservationStatus::Confirmed)
-                .map(|o| serde_json::json!(format!("{:?}", o.value))))
+        let core_a: Vec<serde_json::Value> = profile_a
+            .identity
+            .core
+            .iter()
+            .filter_map(|f| {
+                f.observations
+                    .iter()
+                    .find(|o| o.status == ObservationStatus::Confirmed)
+                    .map(|o| serde_json::json!(format!("{:?}", o.value)))
+            })
             .collect();
-        let core_b: Vec<serde_json::Value> = profile_b.identity.core.iter()
-            .filter_map(|f| f.observations.iter()
-                .find(|o| o.status == ObservationStatus::Confirmed)
-                .map(|o| serde_json::json!(format!("{:?}", o.value))))
+        let core_b: Vec<serde_json::Value> = profile_b
+            .identity
+            .core
+            .iter()
+            .filter_map(|f| {
+                f.observations
+                    .iter()
+                    .find(|o| o.status == ObservationStatus::Confirmed)
+                    .map(|o| serde_json::json!(format!("{:?}", o.value)))
+            })
             .collect();
 
         info!(user_a = %t.user_a, user_b = %t.user_b, "pidx_diff");
@@ -829,8 +926,8 @@ fn resolve_obs_mut<'a>(
     path: &str,
     index: usize,
 ) -> Result<&'a mut pidx::models::observation::Observation, String> {
-    let field = resolve_field_mut(profile, path)
-        .ok_or_else(|| format!("unknown field path '{path}'"))?;
+    let field =
+        resolve_field_mut(profile, path).ok_or_else(|| format!("unknown field path '{path}'"))?;
     let len = field.observations.len();
     field
         .observations
@@ -849,29 +946,29 @@ fn resolve_field_mut<'a>(
             profile.identity.core.get_mut(idx)
         }
         ["identity", "reasoning", name] => match *name {
-            "style"   => Some(&mut profile.identity.reasoning.style),
+            "style" => Some(&mut profile.identity.reasoning.style),
             "pattern" => Some(&mut profile.identity.reasoning.pattern),
-            "intake"  => Some(&mut profile.identity.reasoning.intake),
-            "stance"  => Some(&mut profile.identity.reasoning.stance),
+            "intake" => Some(&mut profile.identity.reasoning.intake),
+            "stance" => Some(&mut profile.identity.reasoning.stance),
             _ => None,
         },
         ["domains", idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
-        ["values",  idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
+        ["values", idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
         ["signals", cat, idx] => {
             let idx: usize = idx.parse().ok()?;
             match *cat {
-                "phrases"    => profile.signals.phrases.get_mut(idx),
+                "phrases" => profile.signals.phrases.get_mut(idx),
                 "avoidances" => profile.signals.avoidances.get_mut(idx),
-                "rhythms"    => profile.signals.rhythms.get_mut(idx),
-                "framings"   => profile.signals.framings.get_mut(idx),
+                "rhythms" => profile.signals.rhythms.get_mut(idx),
+                "framings" => profile.signals.framings.get_mut(idx),
                 _ => None,
             }
         }
         ["working", name] => match *name {
-            "mode"     => Some(&mut profile.working.mode),
-            "pace"     => Some(&mut profile.working.pace),
+            "mode" => Some(&mut profile.working.mode),
+            "pace" => Some(&mut profile.working.pace),
             "feedback" => Some(&mut profile.working.feedback),
-            "pattern"  => Some(&mut profile.working.pattern),
+            "pattern" => Some(&mut profile.working.pattern),
             _ => None,
         },
         _ => None,
@@ -886,5 +983,6 @@ fn active_text(field: &pidx::models::observation::ObservationField) -> Option<St
     field.active(FieldClass::Working).map(|v| match v {
         ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
+        ObservationValue::Number(n) => n.to_string(),
     })
 }

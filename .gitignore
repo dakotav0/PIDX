@@ -1,10 +1,18 @@
 .vscode/
 
-pidx-ui/.astro/
+# Astro (archived)
+pidx-ui-astro/.astro/
+pidx-ui-astro/node_modules/
+pidx-ui-astro/dist/
+pidx-ui-astro/public/
+pidx-ui-astro/src/
+pidx-ui-astro/src-tauri/gen/
+pidx-ui-astro/src-tauri/target/
+
+# SvelteKit (active)
+pidx-ui/.svelte-kit/
 pidx-ui/node_modules/
-pidx-ui/dist/
-pidx-ui/public/
-pidx-ui/src/
+pidx-ui/build/
 pidx-ui/src-tauri/gen/
 pidx-ui/src-tauri/target/
 
@@ -18,3 +26,4 @@ mailbox/**
 pyrchive/
 
 target/
+.DS_Store

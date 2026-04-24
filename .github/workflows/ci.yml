@@ -5,10 +5,11 @@ on:
   pull_request:
 
 jobs:
-  build-and-test:
+  # Core crate + MCP server — portable, runs on all platforms
+  core:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -18,17 +19,56 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build (excluding Tauri UI)
-        run: cargo build --workspace --exclude pidx-ui
+      - name: Format check
+        run: cargo fmt --check
 
-      - name: Test (excluding Tauri UI)
-        run: cargo test --workspace --exclude pidx-ui
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
 
-      - name: Clippy (excluding Tauri UI)
-        run: cargo clippy --workspace --exclude pidx-ui -- -D warnings
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Build
+        run: cargo build --workspace --exclude pidx-ui --exclude pidx-ui-svelte
+
+      - name: Test
+        run: cargo test --workspace --exclude pidx-ui --exclude pidx-ui-svelte
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude pidx-ui --exclude pidx-ui-svelte -- -D warnings
 
       - name: Check schema drift
+        shell: bash
         run: |
-          cargo run --example emit_schema > docs/pidx-schema.json.new
+          cargo run --example emit_schema 2>/dev/null > docs/pidx-schema.json.new
           diff docs/pidx-schema.json docs/pidx-schema.json.new
           rm docs/pidx-schema.json.new
+
+  # Tauri UI — macOS only until cross-platform build is set up
+  ui:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pidx-ui/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: pidx-ui
+        run: npm ci
+
+      - name: Svelte type check
+        working-directory: pidx-ui
+        run: npm run check
+
+      - name: Clippy (Tauri crate)
+        run: cargo clippy -p pidx-ui-svelte -- -D warnings

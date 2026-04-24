@@ -1,0 +1,21 @@
+{
+  "name": "pidx-ui",
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "astro dev --port 1420",
+    "build": "astro build",
+    "preview": "astro preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2"
+  },
+  "devDependencies": {
+    "@astrojs/svelte": "^8.0.4",
+    "@tauri-apps/cli": "^2",
+    "astro": "^6.1.4",
+    "svelte": "^5"
+  }
+}

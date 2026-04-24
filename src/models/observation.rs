@@ -89,6 +89,7 @@ fn default_domain_weight() -> f64 {
 pub enum ObservationValue {
     Text(String),
     Domain(DomainEntry),
+    Number(f64),
 }
 
 // ── Observation ───────────────────────────────────────────────────────────────
@@ -139,19 +140,17 @@ impl Observation {
         // Rust writes RFC 3339 with an offset ("2026-04-07T06:45:37+00:00");
         // Python writes naive ISO 8601 ("2026-04-07T06:45:37.123456").
         // Try RFC 3339 first so Rust-generated timestamps decay correctly.
-        let obs_time: DateTime<Utc> = if let Ok(dt) =
-            DateTime::parse_from_rfc3339(&self.source.timestamp)
-        {
-            dt.with_timezone(&Utc)
-        } else if let Ok(naive) = NaiveDateTime::parse_from_str(
-            &self.source.timestamp,
-            "%Y-%m-%dT%H:%M:%S%.f",
-        ) {
-            naive.and_utc()
-        } else {
-            // Unrecognised format — return base confidence, don't decay.
-            return self.confidence;
-        };
+        let obs_time: DateTime<Utc> =
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&self.source.timestamp) {
+                dt.with_timezone(&Utc)
+            } else if let Ok(naive) =
+                NaiveDateTime::parse_from_str(&self.source.timestamp, "%Y-%m-%dT%H:%M:%S%.f")
+            {
+                naive.and_utc()
+            } else {
+                // Unrecognised format — return base confidence, don't decay.
+                return self.confidence;
+            };
 
         let days = (as_of - obs_time).num_seconds() as f64 / 86400.0;
         let lam = field_class.lambda();
@@ -177,8 +176,12 @@ pub struct ObservationField {
     pub proposal_count: u32,
 }
 
-fn default_proposal_count() -> u32 { 1 }
-fn is_one(n: &u32) -> bool { *n == 1 }
+fn default_proposal_count() -> u32 {
+    1
+}
+fn is_one(n: &u32) -> bool {
+    *n == 1
+}
 
 impl ObservationField {
     /// The current active value: the confirmed observation with the highest
@@ -209,6 +212,16 @@ impl ObservationField {
             .any(|o| o.status == ObservationStatus::Delta)
     }
 
+    /// The maximum base confidence among confirmed observations in this field.
+    /// Returns 0.0 if there are no confirmed observations.
+    pub fn overall_confidence(&self) -> f64 {
+        self.observations
+            .iter()
+            .filter(|o| o.status == ObservationStatus::Confirmed)
+            .map(|o| o.confidence)
+            .fold(0.0_f64, f64::max)
+    }
+
     /// The conflicting pair if this field is in delta, otherwise `None`.
     ///
     /// Returns references to the first two delta observations. The caller
@@ -233,10 +246,7 @@ impl ObservationField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{
-        confidence::Origination,
-        decay::FieldClass,
-    };
+    use crate::models::{confidence::Origination, decay::FieldClass};
 
     fn make_obs(timestamp: &str) -> Observation {
         Observation {
@@ -278,7 +288,10 @@ mod tests {
         let obs = make_obs(&ts);
 
         let eff = obs.effective_confidence(FieldClass::Signal, None);
-        assert!(eff < 0.01, "Naive ISO 8601 timestamp should decay: got {eff}");
+        assert!(
+            eff < 0.01,
+            "Naive ISO 8601 timestamp should decay: got {eff}"
+        );
     }
 
     /// decay_exempt observations always return base confidence, regardless of timestamp.

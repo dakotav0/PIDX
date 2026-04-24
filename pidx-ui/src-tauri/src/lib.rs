@@ -2,17 +2,8 @@ mod commands;
 
 pub use commands::AppState;
 
-/// Tauri app entry point — called from main.rs.
-///
-/// This is the Tauri equivalent of `main()` in the CLI. `generate_handler!` turns
-/// the `#[tauri::command]` functions into an IPC handler table. The frontend calls
-/// these by name: `invoke('list_users')`, `invoke('confirm_observation', { ... })`.
-///
-/// `manage(AppState::new())` registers the shared cache as injectable state —
-/// Tauri's DI system injects it into any command that has `State<'_, AppState>`.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialise tracing — same setup as the CLI, stderr only
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -34,7 +25,9 @@ pub fn run() {
             commands::reject_all,
             commands::clear,
             commands::ingest_packet,
+            commands::ingest_packet_content,
             commands::resolve_delta,
+            commands::resolve_review,
             commands::annotate,
             commands::decay,
         ])

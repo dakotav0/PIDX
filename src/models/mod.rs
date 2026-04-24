@@ -20,6 +20,6 @@ pub use observation::{
     ObservationValue,
 };
 pub use profile::{
-    Annotation, BridgeLog, BridgeLogEntry, CleanupPolicy, DeltaItem, Identity,
-    IdentityReasoning, ProfileDocument, ProfileMeta, Register, ReviewItem, Signals, Working,
+    Annotation, BridgeLog, BridgeLogEntry, CleanupPolicy, DeltaItem, Identity, IdentityReasoning,
+    ProfileDocument, ProfileMeta, Register, ReviewItem, Signals, Working,
 };

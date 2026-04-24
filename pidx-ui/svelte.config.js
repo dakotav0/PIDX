@@ -1,8 +1,12 @@
-import { vitePreprocess } from '@astrojs/svelte';
+import adapter from '@sveltejs/adapter-static';
 
-/** @type {import('@sveltejs/vite-plugin-svelte').SvelteConfig} */
-export default {
-  // Astro handles Svelte integration via astro.config.mjs;
-  // this file only exists to suppress the "no Svelte config found" warning.
-  preprocess: vitePreprocess(),
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+	compilerOptions: {
+		// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
+		runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
+	},
+	kit: { adapter: adapter({ fallback: 'index.html' }) }
 };
+
+export default config;

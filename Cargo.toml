@@ -1,5 +1,5 @@
 [workspace]
-members  = [".", "pidx-ui/src-tauri", "pidx-mcp"]
+members  = [".", "pidx-ui-astro/src-tauri", "pidx-ui/src-tauri", "pidx-mcp"]
 resolver = "2"
 
 [package]
