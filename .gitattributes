@@ -1,0 +1,18 @@
+# Normalize line endings to LF for all text files
+* text=auto eol=lf
+
+# Explicitly LF for generated/checked-in artifacts
+*.json text eol=lf
+*.toml text eol=lf
+*.rs   text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.ts   text eol=lf
+*.svelte text eol=lf
+*.css  text eol=lf
+*.js   text eol=lf
+
+# Binaries — no newline conversion
+*.png  binary
+*.svg  binary
