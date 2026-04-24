@@ -234,7 +234,7 @@ fn values_conflict(existing: &ObservationValue, incoming: &serde_json::Value) ->
             }
         }
         (ObservationValue::Number(a), serde_json::Value::Number(b)) => {
-            b.as_f64().map_or(false, |b| (*a - b).abs() > f64::EPSILON)
+            b.as_f64().is_some_and(|b| (*a - b).abs() > f64::EPSILON)
         }
         _ => false,
     }
@@ -255,7 +255,7 @@ fn values_match(existing: &ObservationValue, incoming: &serde_json::Value) -> bo
             }
         }
         (ObservationValue::Number(a), serde_json::Value::Number(b)) => {
-            b.as_f64().map_or(false, |b| (*a - b).abs() <= f64::EPSILON)
+            b.as_f64().is_some_and(|b| (*a - b).abs() <= f64::EPSILON)
         }
         _ => false,
     }
