@@ -74,5 +74,17 @@ profiles/           — example profiles (live profiles excluded via .gitignore)
 
 ## Status
 
-**v0** — CLI and MCP server are stable. Schema `v0.1.0`. Cargo.lock committed.
+**v0.2** — CLI and MCP server are stable. Schema `v0.2.0`. Cargo.lock committed.
 Tauri UI is experimental and excluded from v0.
+
+## Bundled with mRAG
+
+PIDX ships alongside [mRAG](https://github.com/dakotav0/mrag), a local-first associative memory engine with configurable decay and affect routing. Together:
+
+| Layer | Tool | Role |
+|---|---|---|
+| **Identity** | PIDX | Structured observations, confidence tracking, profile diffing |
+| **Memory** | [mRAG](https://github.com/dakotav0/mrag) | Associative retrieval, decay, affect routing |
+| **Bridge** | `.bridge.json` | Cross-agent session packets |
+
+See [on_agents.md](on_agents.md) for the design statement that ships with this bundle.
