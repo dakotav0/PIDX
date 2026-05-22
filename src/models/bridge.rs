@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -5,43 +7,39 @@ use super::confidence::Origination;
 
 // ── BridgeOrigination ─────────────────────────────────────────────────────────
 
-/// The only origination values a bridge packet is permitted to carry.
+/// Origination values a bridge packet is permitted to carry.
 ///
-/// Bridge packets come from local model sessions — they can never claim "active"
-/// (structured elicitation) or "user" (self-report) origination. Using a separate
-/// enum instead of `Origination` makes this constraint enforced at the type level:
-/// you cannot accidentally construct a bridge observation with user-level confidence.
+/// v0.1 packets could only use `passive` or `sync`. v0.2 narrative-analyst
+/// packets use `active` (structured elicitation), which maps to the
+/// `Active × claude.*` → 0.91 row in the confidence matrix.
 ///
-/// Deserialization is intentionally lenient: any unrecognized string falls back to
-/// `Passive` rather than hard-failing. This prevents a hallucinated origination value
-/// from aborting an entire packet ingest.
+/// `user` origination is still forbidden at the bridge layer — only the
+/// user themselves can set that via CLI/MCP annotate.
+///
+/// Deserialization falls back to `Passive` for any unrecognized string rather
+/// than hard-failing the entire packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BridgeOrigination {
+    Active,
     Passive,
     Sync,
 }
 
 impl BridgeOrigination {
-    /// Serde default fn — used when `origination` is missing from the packet JSON.
     pub fn default_passive() -> BridgeOrigination {
         BridgeOrigination::Passive
     }
 
-    /// Custom deserializer that falls back to Passive for any unknown/bad value.
-    ///
-    /// LLMs frequently hallucinate origination strings like "active" or "user".
-    /// Rather than panicking on the first bad packet, we silently downgrade to
-    /// Passive (the lowest-trust bridge-allowed tier). The ingest log captures
-    /// which packet was processed, so the downgrade is auditable.
     pub fn deserialize_with_fallback<'de, D>(d: D) -> Result<BridgeOrigination, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(d).unwrap_or_default();
         Ok(match s.as_str() {
-            "sync" => BridgeOrigination::Sync,
-            _ => BridgeOrigination::Passive,
+            "active" => BridgeOrigination::Active,
+            "sync"   => BridgeOrigination::Sync,
+            _        => BridgeOrigination::Passive,
         })
     }
 }
@@ -49,60 +47,173 @@ impl BridgeOrigination {
 impl From<BridgeOrigination> for Origination {
     fn from(b: BridgeOrigination) -> Origination {
         match b {
+            BridgeOrigination::Active  => Origination::Active,
             BridgeOrigination::Passive => Origination::Passive,
             BridgeOrigination::Sync => Origination::Sync,
         }
     }
 }
 
-// ── BridgeObservation ─────────────────────────────────────────────────────────
+// ── BridgeSource (v0.2) ───────────────────────────────────────────────────────
 
-/// A single observation payload within a bridge packet.
+/// Source metadata carried in v0.2 packets — analogous to the flat
+/// `orientation`/`session_ref`/`timestamp` fields of v0.1 but grouped and
+/// extended with a `type` discriminant and per-observation origination.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeSource {
+    /// Classifier for the observation mechanism, e.g. `"session_analysis"`.
+    #[serde(rename = "type", default)]
+    pub source_type: String,
+    #[serde(
+        deserialize_with = "BridgeOrigination::deserialize_with_fallback",
+        default = "BridgeOrigination::default_passive"
+    )]
+    pub origination: BridgeOrigination,
+    pub orientation: String,
+    pub session_ref: String,
+    pub timestamp: String,
+}
+
+// ── BridgeObservation (v0.1) ──────────────────────────────────────────────────
+
+/// Single observation in a v0.1 flat-array packet.
 ///
-/// `value` is typed as `serde_json::Value` — the Rust equivalent of Python's `Any`.
-/// It represents whatever JSON the local model produced: a bare string for text
-/// observations, a `{"label": ..., "weight": ...}` object for domains, or an
-/// Evidence-compatible dict for register observations. The ingestion layer
-/// decides how to interpret it based on `field`.
-///
-/// Unknown top-level keys are silently ignored by serde's default behavior —
-/// no `#[serde(deny_unknown_fields)]` means hallucinated extra fields are dropped
-/// without error.
+/// Unknown top-level keys are silently ignored — no `#[serde(deny_unknown_fields)]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeObservation {
-    /// Dot-path identifying the target field, e.g. `"identity.core"`,
-    /// `"signals.phrases"`, `"register.evidence"`.
+    /// Dot-path to the target field, e.g. `"identity.core"`, `"signals.phrases"`.
     pub field: String,
-    /// Raw JSON value produced by the local model. Parsed at ingest time.
     pub value: Value,
     #[serde(
         deserialize_with = "BridgeOrigination::deserialize_with_fallback",
         default = "BridgeOrigination::default_passive"
     )]
     pub origination: BridgeOrigination,
-    /// The source text that caused this observation, for audit purposes.
     pub raw: Option<String>,
+}
+
+// ── BridgeObservationV2 (v0.2) ────────────────────────────────────────────────
+
+/// Observation entry inside the v0.2 field-keyed `observations_proposed` map.
+///
+/// `confidence`, `weight`, `status`, `revision`, `decay_exempt` are deserialized
+/// and silently dropped — the engine always computes these server-side (axiom 2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeObservationV2 {
+    pub value: Value,
+    pub source: BridgeSource,
+}
+
+// ── BridgeDeltaFlags ──────────────────────────────────────────────────────────
+
+/// Hints from the source about which existing observations to act on.
+///
+/// `confirm`: field prefixes whose proposed observations the source believes
+///   are safe to auto-confirm. Treated like `confirm_all_proposed(prefix)`.
+/// `revise` / `deprecate`: logged as intent but not auto-actioned (trust boundary).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BridgeDeltaFlags {
+    #[serde(default)]
+    pub confirm: Vec<String>,
+    #[serde(default)]
+    pub revise: Vec<String>,
+    #[serde(default)]
+    pub deprecate: Vec<String>,
+}
+
+// ── BridgeDyadicNotes ─────────────────────────────────────────────────────────
+
+/// Relational metadata about a specific pairing between two profiles.
+///
+/// Stored as a decay-exempt annotation on the target profile rather than as a
+/// first-class schema field — a dedicated `dyadic` document type is deferred to v0.3.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeDyadicNotes {
+    /// Pairing identifier, e.g. `"dakota–naomi"`.
+    pub pairing: String,
+    #[serde(default)]
+    pub complementarity_finding: String,
+    pub risk_flag: Option<String>,
 }
 
 // ── BridgePacket ──────────────────────────────────────────────────────────────
 
-/// An inbound packet from a local model session.
+/// Inbound packet from a model session. Supports both the v0.1 flat format
+/// and the v0.2 structured format produced by narrative-analyst orientations.
 ///
-/// Written to disk as `{session}.bridge.json` by the local model or bridge
-/// script, then picked up by the bridge watcher and fed into `ingest_bridge_packet`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// ## Backward compatibility
+///
+/// A v0.1 packet has `bridge_version`, flat `orientation`/`session_ref`/`timestamp`,
+/// and an `observations` array. All of those fields continue to work unchanged.
+///
+/// A v0.2 packet uses `bridge_format_version`, a nested `source` object, and an
+/// `observations_proposed` field-keyed map. Both formats can coexist in one packet
+/// (edge case: a migrating producer that sends both arrays).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BridgePacket {
-    #[serde(default = "default_bridge_version")]
-    pub bridge_version: String,
-    /// The local model identity, e.g. `"local:gemma3:4b"`.
+    /// Renamed from `bridge_version` in v0.2. Both names are accepted.
+    #[serde(alias = "bridge_version", default = "default_bridge_format_version")]
+    pub bridge_format_version: String,
+
+    // ── v0.2 nested source ────────────────────────────────────────────────────
+    /// Source metadata object. When present, overrides the flat fields below.
+    #[serde(default)]
+    pub source: Option<BridgeSource>,
+
+    // ── v0.1 flat source fields (also fallback when `source` is absent) ───────
+    #[serde(default)]
     pub orientation: String,
+    #[serde(default)]
     pub session_ref: String,
-    /// ISO 8601 session start timestamp.
+    #[serde(default)]
     pub timestamp: String,
+
+    // ── Routing ───────────────────────────────────────────────────────────────
+    /// When set, the engine uses this as the profile ID without requiring an
+    /// explicit `user_id` argument from the caller.
+    pub target_profile: Option<String>,
+
+    /// Informational version stamps — stored in the bridge log entry, no
+    /// optimistic-locking behavior.
+    pub target_version: Option<String>,
+    pub previous_version: Option<String>,
+
+    // ── Observations ──────────────────────────────────────────────────────────
+    /// v0.1: flat array with per-observation `field` and `origination`.
     #[serde(default)]
     pub observations: Vec<BridgeObservation>,
+
+    /// v0.2: field-keyed map; each observation carries its own `source`.
+    #[serde(default)]
+    pub observations_proposed: HashMap<String, Vec<BridgeObservationV2>>,
+
+    // ── Delta / dyadic metadata ───────────────────────────────────────────────
+    /// Source hints about which prefixes to auto-confirm after ingestion.
+    #[serde(default)]
+    pub deltas_flagged: Option<BridgeDeltaFlags>,
+
+    /// Relational metadata about a profile pairing; stored as an annotation.
+    #[serde(default)]
+    pub dyadic_notes: Option<BridgeDyadicNotes>,
 }
 
-fn default_bridge_version() -> String {
+impl BridgePacket {
+    /// Orientation — from `source.orientation` if v0.2, else flat `orientation`.
+    pub fn effective_orientation(&self) -> &str {
+        self.source.as_ref().map_or(self.orientation.as_str(), |s| s.orientation.as_str())
+    }
+
+    /// Session reference.
+    pub fn effective_session_ref(&self) -> &str {
+        self.source.as_ref().map_or(self.session_ref.as_str(), |s| s.session_ref.as_str())
+    }
+
+    /// ISO 8601 timestamp.
+    pub fn effective_timestamp(&self) -> &str {
+        self.source.as_ref().map_or(self.timestamp.as_str(), |s| s.timestamp.as_str())
+    }
+}
+
+fn default_bridge_format_version() -> String {
     "0.1".to_string()
 }

@@ -10,6 +10,8 @@ pidx-ui-astro/src-tauri/gen/
 pidx-ui-astro/src-tauri/target/
 
 # SvelteKit (active)
+.DS_Store
+pidx-ui/.astro/
 pidx-ui/.svelte-kit/
 pidx-ui/node_modules/
 pidx-ui/build/
@@ -27,3 +29,5 @@ pyrchive/
 
 target/
 .DS_Store
+
+pilot-eval/iteration-*/eval-*

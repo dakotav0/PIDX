@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::models::bridge::{BridgeObservation, BridgeOrigination, BridgePacket};
+use crate::models::bridge::{BridgeObservation, BridgeOrigination, BridgeObservationV2, BridgePacket};
 use crate::models::confidence::{Origination, CORROBORATION_BONUS};
 use crate::models::decay::FieldClass;
 use crate::models::evidence::{Evidence, RegisterMetricName};
@@ -14,20 +14,35 @@ use crate::traits::IngestSource;
 
 // ── IngestSource for bridge observations ─────────────────────────────────────
 
-/// Pairs a single bridge observation's origination with the packet's shared
-/// orientation and session_ref to produce an `IngestSource` implementation.
-///
-/// ## Rust lesson: lifetime parameters
-///
-/// The `'a` here is a lifetime — it tells the compiler that `BridgeObsSource`
-/// cannot outlive the `BridgePacket` it borrows. Lifetimes are Rust's way of
-/// making "this reference is valid as long as that thing exists" explicit. You
-/// don't need to do arithmetic with them; the compiler just needs to know the
-/// relationship so it can verify safety. This particular pattern — a short-lived
-/// "view" struct that holds references into other data — is common in Rust.
+/// Pairs origination + source strings for a single observation into an
+/// `IngestSource` view. Holds `&str` slices so it works for both v0.1
+/// (referencing packet-level fields) and v0.2 (referencing per-observation
+/// source fields) without lifetime coupling to the whole packet.
 struct BridgeObsSource<'a> {
     origination: BridgeOrigination,
-    packet: &'a BridgePacket,
+    orientation: &'a str,
+    session_ref: &'a str,
+    timestamp: &'a str,
+}
+
+impl<'a> BridgeObsSource<'a> {
+    fn from_v1(obs: &'a BridgeObservation, packet: &'a BridgePacket) -> Self {
+        BridgeObsSource {
+            origination: obs.origination,
+            orientation: packet.effective_orientation(),
+            session_ref: packet.effective_session_ref(),
+            timestamp: packet.effective_timestamp(),
+        }
+    }
+
+    fn from_v2(obs: &'a BridgeObservationV2) -> Self {
+        BridgeObsSource {
+            origination: obs.source.origination,
+            orientation: &obs.source.orientation,
+            session_ref: &obs.source.session_ref,
+            timestamp: &obs.source.timestamp,
+        }
+    }
 }
 
 impl<'a> IngestSource for BridgeObsSource<'a> {
@@ -35,13 +50,11 @@ impl<'a> IngestSource for BridgeObsSource<'a> {
         Origination::from(self.origination)
     }
     fn orientation(&self) -> &str {
-        &self.packet.orientation
+        self.orientation
     }
     fn session_ref(&self) -> &str {
-        &self.packet.session_ref
+        self.session_ref
     }
-    // base_confidence() is provided by the trait using the above three methods —
-    // no override needed. Local passive → 0.61, local sync → 0.55.
 }
 
 // ── Field routing ─────────────────────────────────────────────────────────────
@@ -288,28 +301,89 @@ fn find_matching_field(
 ///
 /// Evidence is always additive — no delta detection runs on it. The register
 /// score is recomputed at read-time from the full evidence pool.
-///
-/// Uses an exhaustive `match` on `RegisterMetricName` rather than Python's
-/// `hasattr`/`getattr`. If we add a new register dimension later, the compiler
-/// will flag this match as non-exhaustive and force us to handle it.
-fn ingest_evidence(profile: &mut ProfileDocument, bo: &BridgeObservation, _packet: &BridgePacket) {
-    // "let-else" — if the pattern doesn't match, execute the else block.
-    // The else block must diverge (return, break, continue, or panic).
-    // This is the idiomatic Rust alternative to Python's early-return guards.
-    let serde_json::Value::Object(_) = &bo.value else {
+fn ingest_evidence_value(profile: &mut ProfileDocument, value: &serde_json::Value) {
+    let serde_json::Value::Object(_) = value else { return; };
+    let Ok(ev) = serde_json::from_value::<Evidence>(value.clone()) else { return; };
+    match ev.metric {
+        RegisterMetricName::Formality   => profile.comm.formality.evidence.push(ev),
+        RegisterMetricName::Directness  => profile.comm.directness.evidence.push(ev),
+        RegisterMetricName::Hedging     => profile.comm.hedging.evidence.push(ev),
+        RegisterMetricName::Humor       => profile.comm.humor.evidence.push(ev),
+        RegisterMetricName::Abstraction => profile.comm.abstraction.evidence.push(ev),
+        RegisterMetricName::Affect      => profile.comm.affect.evidence.push(ev),
+    }
+}
+
+/// Routes `field`/`value` to the right `ObservationField`, applies delta detection,
+/// and increments `proposed`/`deltas`. The caller is responsible for building the
+/// correct `BridgeObsSource` from whichever packet format it is processing.
+fn ingest_one_observation(
+    profile: &mut ProfileDocument,
+    field: &str,
+    value: &serde_json::Value,
+    src: &BridgeObsSource<'_>,
+    proposed: &mut usize,
+    deltas: &mut usize,
+) {
+    if field == "register.evidence" {
+        ingest_evidence_value(profile, value);
         return;
-    };
-    let Ok(ev) = serde_json::from_value::<Evidence>(bo.value.clone()) else {
-        return;
+    }
+
+    let Some(obs_value) = parse_value(value) else { return; };
+
+    let base_conf = src.base_confidence();
+    let source = ObservationSource {
+        origination: Origination::from(src.origination),
+        orientation: src.orientation.to_string(),
+        session_ref: src.session_ref.to_string(),
+        timestamp: src.timestamp.to_string(),
     };
 
-    match ev.metric {
-        RegisterMetricName::Formality => profile.comm.formality.evidence.push(ev),
-        RegisterMetricName::Directness => profile.comm.directness.evidence.push(ev),
-        RegisterMetricName::Hedging => profile.comm.hedging.evidence.push(ev),
-        RegisterMetricName::Humor => profile.comm.humor.evidence.push(ev),
-        RegisterMetricName::Abstraction => profile.comm.abstraction.evidence.push(ev),
-        RegisterMetricName::Affect => profile.comm.affect.evidence.push(ev),
+    let mut new_obs = Observation {
+        value: obs_value,
+        source,
+        confidence: base_conf,
+        weight: 1.0,
+        status: ObservationStatus::Proposed,
+        revision: 1,
+        decay_exempt: false,
+    };
+
+    let mut pending_delta: Option<DeltaItem> = None;
+
+    match route_field(profile, field, value) {
+        FieldRoute::Unknown | FieldRoute::RegisterEvidence => return,
+        FieldRoute::DedupField(f) => {
+            f.proposal_count = f.proposal_count.saturating_add(1);
+            *proposed += 1;
+        }
+        FieldRoute::Field(f, _fc) => {
+            let conflict_idx = f.observations.iter().position(|o| {
+                o.status == ObservationStatus::Confirmed && values_conflict(&o.value, value)
+            });
+            if let Some(idx) = conflict_idx {
+                f.observations[idx].status = ObservationStatus::Delta;
+                new_obs.status = ObservationStatus::Delta;
+                pending_delta = Some(DeltaItem {
+                    id: Uuid::new_v4().to_string(),
+                    field: field.to_string(),
+                    a: f.observations[idx].clone(),
+                    b: new_obs.clone(),
+                    created_at: crate::models::profile::ProfileMeta::now_utc(),
+                    resolved: false,
+                });
+                f.observations.push(new_obs);
+                *deltas += 1;
+            } else {
+                f.observations.push(new_obs);
+                *proposed += 1;
+            }
+        }
+    }
+
+    if let Some(delta) = pending_delta {
+        profile.delta_queue.push(delta);
     }
 }
 
@@ -317,14 +391,11 @@ fn ingest_evidence(profile: &mut ProfileDocument, bo: &BridgeObservation, _packe
 
 /// Ingest a `BridgePacket` into the profile.
 ///
-/// For each observation in the packet:
-/// - `register.evidence` → additive append to the correct `RegisterMetric`
-/// - all other paths → route to the correct `ObservationField`, check for conflicts
-///
-/// Observations start as `"proposed"` — they are never auto-confirmed from bridge
-/// packets. The user must explicitly confirm them in the session review.
-///
-/// Appends a `BridgeLogEntry` to `profile.bridge_log.processed` on completion.
+/// Handles both the v0.1 flat `observations` array and the v0.2 field-keyed
+/// `observations_proposed` map. After proposing observations, any prefixes
+/// listed in `deltas_flagged.confirm` are auto-confirmed (same as calling
+/// `confirm_all_proposed` on each). If the packet carries `dyadic_notes`,
+/// they are stored as a decay-exempt annotation on the profile.
 ///
 /// Returns `(observations_proposed, deltas_flagged)`.
 pub fn ingest_bridge_packet(
@@ -335,109 +406,59 @@ pub fn ingest_bridge_packet(
     let mut proposed = 0usize;
     let mut deltas = 0usize;
 
+    // ── v0.1: flat observations array ─────────────────────────────────────────
     for bo in &packet.observations {
-        // Register evidence: additive path, no routing or delta detection.
-        if bo.field == "register.evidence" {
-            ingest_evidence(profile, bo, packet);
-            continue;
-        }
+        let src = BridgeObsSource::from_v1(bo, packet);
+        ingest_one_observation(profile, &bo.field, &bo.value, &src, &mut proposed, &mut deltas);
+    }
 
-        // Parse the raw JSON value into a typed ObservationValue.
-        // If the value isn't a recognized type, skip this observation silently.
-        let Some(obs_value) = parse_value(&bo.value) else {
-            continue;
-        };
-
-        // Build the IngestSource view for this observation and get its confidence.
-        let source_view = BridgeObsSource {
-            origination: bo.origination,
-            packet,
-        };
-        let base_conf = source_view.base_confidence();
-
-        // Construct the full ObservationSource for storage.
-        let source = ObservationSource {
-            origination: Origination::from(bo.origination),
-            orientation: packet.orientation.clone(),
-            session_ref: packet.session_ref.clone(),
-            timestamp: packet.timestamp.clone(),
-        };
-
-        let mut new_obs = Observation {
-            value: obs_value,
-            source,
-            confidence: base_conf,
-            weight: 1.0,
-            status: ObservationStatus::Proposed,
-            revision: 1,
-            decay_exempt: false,
-        };
-
-        // Route the dot-path to the target field. Unknown paths are skipped.
-        //
-        // Rust lesson: borrow splitting
-        // `route_field` returns a mutable reference *into* profile (the field).
-        // While that reference is live, the borrow checker treats `profile` as
-        // mutably borrowed — so we can't also push to `profile.delta_queue` inside
-        // the same match arm. Fix: build the DeltaItem while the field reference is
-        // live (cloning the data we need), then push to delta_queue *after* the match
-        // arm ends and the field borrow is released.
-        let mut pending_delta: Option<DeltaItem> = None;
-
-        match route_field(profile, &bo.field, &bo.value) {
-            FieldRoute::Unknown | FieldRoute::RegisterEvidence => continue,
-            FieldRoute::DedupField(field) => {
-                // Same value already proposed — increment counter, no new slot.
-                field.proposal_count = field.proposal_count.saturating_add(1);
-                proposed += 1;
-            }
-            FieldRoute::Field(field, _field_class) => {
-                // Delta detection: find the first confirmed observation that conflicts.
-                let conflict_idx = field.observations.iter().position(|o| {
-                    o.status == ObservationStatus::Confirmed && values_conflict(&o.value, &bo.value)
-                });
-
-                if let Some(idx) = conflict_idx {
-                    // Park the existing confirmed observation in delta status.
-                    field.observations[idx].status = ObservationStatus::Delta;
-                    new_obs.status = ObservationStatus::Delta;
-
-                    // Clone data needed for DeltaItem — we'll push to delta_queue
-                    // after this arm so the field borrow is fully released first.
-                    pending_delta = Some(DeltaItem {
-                        id: Uuid::new_v4().to_string(),
-                        field: bo.field.clone(),
-                        a: field.observations[idx].clone(),
-                        b: new_obs.clone(),
-                        created_at: crate::models::profile::ProfileMeta::now_utc(),
-                        resolved: false,
-                    });
-                    field.observations.push(new_obs);
-                    deltas += 1;
-                } else {
-                    field.observations.push(new_obs);
-                    proposed += 1;
-                }
-            }
-        }
-
-        // Field borrow is gone here. Safe to mutably borrow delta_queue now.
-        if let Some(delta) = pending_delta {
-            profile.delta_queue.push(delta);
+    // ── v0.2: field-keyed observations_proposed map ───────────────────────────
+    // Collect keys first to avoid borrowing `packet.observations_proposed` while
+    // the ingestion function mutably borrows `profile`.
+    let field_keys: Vec<String> = packet.observations_proposed.keys().cloned().collect();
+    for field_key in &field_keys {
+        for obs_v2 in &packet.observations_proposed[field_key] {
+            let src = BridgeObsSource::from_v2(obs_v2);
+            ingest_one_observation(profile, field_key, &obs_v2.value, &src, &mut proposed, &mut deltas);
         }
     }
 
-    // Audit log: record this packet regardless of outcome.
+    // ── Auto-confirm from deltas_flagged.confirm ──────────────────────────────
+    if let Some(flags) = &packet.deltas_flagged {
+        for prefix in &flags.confirm {
+            confirm_all_proposed(profile, prefix);
+        }
+    }
+
+    // ── Dyadic notes → decay-exempt annotation ────────────────────────────────
+    if let Some(dyadic) = &packet.dyadic_notes {
+        let note = format!(
+            "[dyadic:{pairing}] {finding}{risk}",
+            pairing = dyadic.pairing,
+            finding = dyadic.complementarity_finding,
+            risk = dyadic.risk_flag
+                .as_deref()
+                .map(|r| format!(" | risk: {r}"))
+                .unwrap_or_default(),
+        );
+        profile.annotations.push(crate::models::profile::Annotation {
+            id: Uuid::new_v4().to_string(),
+            field: "annotations".to_string(),
+            note,
+            author: packet.effective_orientation().to_string(),
+            created_at: packet.effective_timestamp().to_string(),
+            pinned: false,
+        });
+    }
+
+    // ── Audit log ─────────────────────────────────────────────────────────────
     profile.bridge_log.processed.push(BridgeLogEntry {
         filename: filename.to_string(),
         ingested_at: crate::models::profile::ProfileMeta::now_utc(),
         observations_proposed: proposed as u32,
         deltas_flagged: deltas as u32,
     });
-    profile
-        .bridge_log
-        .pending_filenames
-        .retain(|f| f != filename);
+    profile.bridge_log.pending_filenames.retain(|f| f != filename);
 
     (proposed, deltas)
 }
@@ -919,10 +940,10 @@ mod tests {
     use crate::models::profile::ProfileDocument;
     use serde_json::json;
 
-    /// Helper: build a minimal bridge packet with a single text observation.
+    /// Helper: build a minimal v0.1 bridge packet with a single text observation.
     fn single_obs_packet(field: &str, value: serde_json::Value) -> BridgePacket {
         BridgePacket {
-            bridge_version: "0.1".to_string(),
+            bridge_format_version: "0.1".to_string(),
             orientation: "local:gemma3:4b".to_string(),
             session_ref: "test-session-abc".to_string(),
             timestamp: "2026-04-07T06:00:00+00:00".to_string(),
@@ -932,6 +953,7 @@ mod tests {
                 origination: BridgeOrigination::Passive,
                 raw: None,
             }],
+            ..Default::default()
         }
     }
 
@@ -1029,7 +1051,7 @@ mod tests {
         let mut profile = ProfileDocument::new("test");
 
         let make_packet = |orientation: &str, session: &str| BridgePacket {
-            bridge_version: "0.1".to_string(),
+            bridge_format_version: "0.1".to_string(),
             orientation: orientation.to_string(),
             session_ref: session.to_string(),
             timestamp: "2026-04-07T06:00:00+00:00".to_string(),
@@ -1039,6 +1061,7 @@ mod tests {
                 origination: BridgeOrigination::Passive,
                 raw: None,
             }],
+            ..Default::default()
         };
 
         ingest_bridge_packet(

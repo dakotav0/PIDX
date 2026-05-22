@@ -103,6 +103,20 @@ fn section_core(profile: &ProfileDocument, top_n: usize) -> Option<String> {
     Some(format!("### CORE\n{}", lines.join("\n")))
 }
 
+fn draw_markdown_register_bar(score: f64) -> String {
+    let filled = (score.clamp(0.0, 10.0).round()) as usize;
+    let mut bar = String::from("[");
+    for i in 0..10 {
+        if i < filled {
+            bar.push('█');
+        } else {
+            bar.push('░');
+        }
+    }
+    bar.push(']');
+    bar
+}
+
 fn section_register(profile: &ProfileDocument) -> Option<String> {
     let now = Utc::now();
     let reg = &profile.comm;
@@ -125,7 +139,8 @@ fn section_register(profile: &ProfileDocument) -> Option<String> {
         }
         let score = metric.score(Some(now));
         let label = metric.score_label(Some(now));
-        lines.push(format!("- {name}: {score:.1}/10 ({label})"));
+        let bar = draw_markdown_register_bar(score);
+        lines.push(format!("- {name}: {score:.1}/10 {bar} ({label})"));
     }
     if lines.is_empty() {
         return None;
