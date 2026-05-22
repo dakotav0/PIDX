@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::models::bridge::{BridgeObservation, BridgeOrigination, BridgeObservationV2, BridgePacket};
+use crate::models::bridge::{
+    BridgeObservation, BridgeObservationV2, BridgeOrigination, BridgePacket,
+};
 use crate::models::confidence::{Origination, CORROBORATION_BONUS};
 use crate::models::decay::FieldClass;
 use crate::models::evidence::{Evidence, RegisterMetricName};
@@ -302,15 +304,19 @@ fn find_matching_field(
 /// Evidence is always additive — no delta detection runs on it. The register
 /// score is recomputed at read-time from the full evidence pool.
 fn ingest_evidence_value(profile: &mut ProfileDocument, value: &serde_json::Value) {
-    let serde_json::Value::Object(_) = value else { return; };
-    let Ok(ev) = serde_json::from_value::<Evidence>(value.clone()) else { return; };
+    let serde_json::Value::Object(_) = value else {
+        return;
+    };
+    let Ok(ev) = serde_json::from_value::<Evidence>(value.clone()) else {
+        return;
+    };
     match ev.metric {
-        RegisterMetricName::Formality   => profile.comm.formality.evidence.push(ev),
-        RegisterMetricName::Directness  => profile.comm.directness.evidence.push(ev),
-        RegisterMetricName::Hedging     => profile.comm.hedging.evidence.push(ev),
-        RegisterMetricName::Humor       => profile.comm.humor.evidence.push(ev),
+        RegisterMetricName::Formality => profile.comm.formality.evidence.push(ev),
+        RegisterMetricName::Directness => profile.comm.directness.evidence.push(ev),
+        RegisterMetricName::Hedging => profile.comm.hedging.evidence.push(ev),
+        RegisterMetricName::Humor => profile.comm.humor.evidence.push(ev),
         RegisterMetricName::Abstraction => profile.comm.abstraction.evidence.push(ev),
-        RegisterMetricName::Affect      => profile.comm.affect.evidence.push(ev),
+        RegisterMetricName::Affect => profile.comm.affect.evidence.push(ev),
     }
 }
 
@@ -330,7 +336,9 @@ fn ingest_one_observation(
         return;
     }
 
-    let Some(obs_value) = parse_value(value) else { return; };
+    let Some(obs_value) = parse_value(value) else {
+        return;
+    };
 
     let base_conf = src.base_confidence();
     let source = ObservationSource {
@@ -409,7 +417,14 @@ pub fn ingest_bridge_packet(
     // ── v0.1: flat observations array ─────────────────────────────────────────
     for bo in &packet.observations {
         let src = BridgeObsSource::from_v1(bo, packet);
-        ingest_one_observation(profile, &bo.field, &bo.value, &src, &mut proposed, &mut deltas);
+        ingest_one_observation(
+            profile,
+            &bo.field,
+            &bo.value,
+            &src,
+            &mut proposed,
+            &mut deltas,
+        );
     }
 
     // ── v0.2: field-keyed observations_proposed map ───────────────────────────
@@ -419,7 +434,14 @@ pub fn ingest_bridge_packet(
     for field_key in &field_keys {
         for obs_v2 in &packet.observations_proposed[field_key] {
             let src = BridgeObsSource::from_v2(obs_v2);
-            ingest_one_observation(profile, field_key, &obs_v2.value, &src, &mut proposed, &mut deltas);
+            ingest_one_observation(
+                profile,
+                field_key,
+                &obs_v2.value,
+                &src,
+                &mut proposed,
+                &mut deltas,
+            );
         }
     }
 
@@ -436,19 +458,22 @@ pub fn ingest_bridge_packet(
             "[dyadic:{pairing}] {finding}{risk}",
             pairing = dyadic.pairing,
             finding = dyadic.complementarity_finding,
-            risk = dyadic.risk_flag
+            risk = dyadic
+                .risk_flag
                 .as_deref()
                 .map(|r| format!(" | risk: {r}"))
                 .unwrap_or_default(),
         );
-        profile.annotations.push(crate::models::profile::Annotation {
-            id: Uuid::new_v4().to_string(),
-            field: "annotations".to_string(),
-            note,
-            author: packet.effective_orientation().to_string(),
-            created_at: packet.effective_timestamp().to_string(),
-            pinned: false,
-        });
+        profile
+            .annotations
+            .push(crate::models::profile::Annotation {
+                id: Uuid::new_v4().to_string(),
+                field: "annotations".to_string(),
+                note,
+                author: packet.effective_orientation().to_string(),
+                created_at: packet.effective_timestamp().to_string(),
+                pinned: false,
+            });
     }
 
     // ── Audit log ─────────────────────────────────────────────────────────────
@@ -458,7 +483,10 @@ pub fn ingest_bridge_packet(
         observations_proposed: proposed as u32,
         deltas_flagged: deltas as u32,
     });
-    profile.bridge_log.pending_filenames.retain(|f| f != filename);
+    profile
+        .bridge_log
+        .pending_filenames
+        .retain(|f| f != filename);
 
     (proposed, deltas)
 }

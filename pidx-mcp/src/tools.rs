@@ -257,25 +257,28 @@ pub struct PidxMailboxScanTool {
 }
 
 // Register all tools — generates `PidxTools` enum + `PidxTools::tools()` vec
-tool_box!(PidxTools, [
-    PidxListTool,
-    PidxShowTool,
-    PidxStatusTool,
-    PidxIngestTool,
-    PidxMailboxScanTool,
-    PidxConfirmTool,
-    PidxRejectTool,
-    PidxConfirmAllTool,
-    PidxRejectAllTool,
-    PidxClearTool,
-    PidxDeltaListTool,
-    PidxDeltaResolveTool,
-    PidxReviewListTool,
-    PidxReviewProcessTool,
-    PidxAnnotateTool,
-    PidxDiffTool,
-    PidxDecayTool
-]);
+tool_box!(
+    PidxTools,
+    [
+        PidxListTool,
+        PidxShowTool,
+        PidxStatusTool,
+        PidxIngestTool,
+        PidxMailboxScanTool,
+        PidxConfirmTool,
+        PidxRejectTool,
+        PidxConfirmAllTool,
+        PidxRejectAllTool,
+        PidxClearTool,
+        PidxDeltaListTool,
+        PidxDeltaResolveTool,
+        PidxReviewListTool,
+        PidxReviewProcessTool,
+        PidxAnnotateTool,
+        PidxDiffTool,
+        PidxDecayTool
+    ]
+);
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
@@ -318,23 +321,23 @@ impl ServerHandler for PidxHandler {
             .map_err(|_| CallToolError::unknown_tool(params.name.clone()))?;
 
         match tool {
-            PidxTools::PidxListTool(_)           => self.handle_list().await,
-            PidxTools::PidxShowTool(t)           => self.handle_show(t).await,
-            PidxTools::PidxStatusTool(t)         => self.handle_status(t).await,
-            PidxTools::PidxIngestTool(t)         => self.handle_ingest(t).await,
-            PidxTools::PidxMailboxScanTool(t)    => self.handle_mailbox_scan(t).await,
-            PidxTools::PidxConfirmTool(t)        => self.handle_confirm(t).await,
-            PidxTools::PidxRejectTool(t)         => self.handle_reject(t).await,
-            PidxTools::PidxConfirmAllTool(t)     => self.handle_confirm_all(t).await,
-            PidxTools::PidxRejectAllTool(t)      => self.handle_reject_all(t).await,
-            PidxTools::PidxClearTool(t)          => self.handle_clear(t).await,
-            PidxTools::PidxDeltaListTool(t)      => self.handle_delta_list(t).await,
-            PidxTools::PidxDeltaResolveTool(t)   => self.handle_delta_resolve(t).await,
-            PidxTools::PidxReviewListTool(t)     => self.handle_review_list(t).await,
-            PidxTools::PidxReviewProcessTool(t)  => self.handle_review_process(t).await,
-            PidxTools::PidxAnnotateTool(t)       => self.handle_annotate(t).await,
-            PidxTools::PidxDiffTool(t)           => self.handle_diff(t).await,
-            PidxTools::PidxDecayTool(t)          => self.handle_decay(t).await,
+            PidxTools::PidxListTool(_) => self.handle_list().await,
+            PidxTools::PidxShowTool(t) => self.handle_show(t).await,
+            PidxTools::PidxStatusTool(t) => self.handle_status(t).await,
+            PidxTools::PidxIngestTool(t) => self.handle_ingest(t).await,
+            PidxTools::PidxMailboxScanTool(t) => self.handle_mailbox_scan(t).await,
+            PidxTools::PidxConfirmTool(t) => self.handle_confirm(t).await,
+            PidxTools::PidxRejectTool(t) => self.handle_reject(t).await,
+            PidxTools::PidxConfirmAllTool(t) => self.handle_confirm_all(t).await,
+            PidxTools::PidxRejectAllTool(t) => self.handle_reject_all(t).await,
+            PidxTools::PidxClearTool(t) => self.handle_clear(t).await,
+            PidxTools::PidxDeltaListTool(t) => self.handle_delta_list(t).await,
+            PidxTools::PidxDeltaResolveTool(t) => self.handle_delta_resolve(t).await,
+            PidxTools::PidxReviewListTool(t) => self.handle_review_list(t).await,
+            PidxTools::PidxReviewProcessTool(t) => self.handle_review_process(t).await,
+            PidxTools::PidxAnnotateTool(t) => self.handle_annotate(t).await,
+            PidxTools::PidxDiffTool(t) => self.handle_diff(t).await,
+            PidxTools::PidxDecayTool(t) => self.handle_decay(t).await,
         }
     }
 }
@@ -515,7 +518,9 @@ impl PidxHandler {
             .map_err(|e| tool_err(format!("invalid bridge packet: {}", e)))?;
 
         // Resolve user_id: explicit arg takes precedence, then packet's target_profile.
-        let user_id = t.user_id.as_deref()
+        let user_id = t
+            .user_id
+            .as_deref()
             .or(packet.target_profile.as_deref())
             .ok_or_else(|| tool_err("user_id is required when packet has no target_profile"))?
             .to_string();
@@ -952,7 +957,10 @@ impl PidxHandler {
         };
 
         if !mailbox_dir.exists() {
-            return Err(tool_err(format!("directory not found: {}", mailbox_dir.display())));
+            return Err(tool_err(format!(
+                "directory not found: {}",
+                mailbox_dir.display()
+            )));
         }
 
         let processed_dir = mailbox_dir.join("processed");

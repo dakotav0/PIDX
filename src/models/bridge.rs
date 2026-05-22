@@ -38,8 +38,8 @@ impl BridgeOrigination {
         let s = String::deserialize(d).unwrap_or_default();
         Ok(match s.as_str() {
             "active" => BridgeOrigination::Active,
-            "sync"   => BridgeOrigination::Sync,
-            _        => BridgeOrigination::Passive,
+            "sync" => BridgeOrigination::Sync,
+            _ => BridgeOrigination::Passive,
         })
     }
 }
@@ -47,7 +47,7 @@ impl BridgeOrigination {
 impl From<BridgeOrigination> for Origination {
     fn from(b: BridgeOrigination) -> Origination {
         match b {
-            BridgeOrigination::Active  => Origination::Active,
+            BridgeOrigination::Active => Origination::Active,
             BridgeOrigination::Passive => Origination::Passive,
             BridgeOrigination::Sync => Origination::Sync,
         }
@@ -200,17 +200,23 @@ pub struct BridgePacket {
 impl BridgePacket {
     /// Orientation — from `source.orientation` if v0.2, else flat `orientation`.
     pub fn effective_orientation(&self) -> &str {
-        self.source.as_ref().map_or(self.orientation.as_str(), |s| s.orientation.as_str())
+        self.source
+            .as_ref()
+            .map_or(self.orientation.as_str(), |s| s.orientation.as_str())
     }
 
     /// Session reference.
     pub fn effective_session_ref(&self) -> &str {
-        self.source.as_ref().map_or(self.session_ref.as_str(), |s| s.session_ref.as_str())
+        self.source
+            .as_ref()
+            .map_or(self.session_ref.as_str(), |s| s.session_ref.as_str())
     }
 
     /// ISO 8601 timestamp.
     pub fn effective_timestamp(&self) -> &str {
-        self.source.as_ref().map_or(self.timestamp.as_str(), |s| s.timestamp.as_str())
+        self.source
+            .as_ref()
+            .map_or(self.timestamp.as_str(), |s| s.timestamp.as_str())
     }
 }
 
