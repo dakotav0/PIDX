@@ -384,6 +384,7 @@ fn val_str(v: &ObservationValue) -> String {
     match v {
         ObservationValue::Text(s)   => s.clone(),
         ObservationValue::Domain(d) => format!("{} ({:.0}%)", d.label, d.weight * 100.0),
+        ObservationValue::Number(n) => n.to_string(),
     }
 }
 
@@ -392,6 +393,7 @@ fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
     field.active(fc).map(|v| match v {
         ObservationValue::Text(s)   => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
+        ObservationValue::Number(n) => n.to_string(),
     })
 }
 
@@ -578,6 +580,7 @@ fn build_show_json(profile: &mut ProfileDocument, tier: Tier) -> ShowJson {
                     weight_pct: (d.weight * 100.0).round() as u32,
                 },
                 ObservationValue::Text(s) => DomainJson { label: s.clone(), weight_pct: 0 },
+                ObservationValue::Number(n) => DomainJson { label: n.to_string(), weight_pct: 0 },
             })
             .collect();
 

@@ -30,4 +30,5 @@ pyrchive/
 target/
 .DS_Store
 
-pilot-eval/iteration-*/eval-*
+pilot-eval/
+
