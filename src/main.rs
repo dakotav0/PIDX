@@ -541,6 +541,8 @@ fn print_boxed_card(title: &str, content: &[String]) {
 // ── Command handlers ──────────────────────────────────────────────────────────
 
 fn cmd_show(user_id: &str, tier: Tier, format: Format) -> Result<()> {
+    use std::io::IsTerminal;
+
     let store = ProfileStore::new(ProfileStore::default_dir());
     let mut profile = store.load_or_create(user_id)?;
 
@@ -576,8 +578,12 @@ fn cmd_show(user_id: &str, tier: Tier, format: Format) -> Result<()> {
                 ),
                 &card_lines,
             );
+            if !std::io::stdout().is_terminal() {
+                println!("{out}");
+            }
+        } else {
+            println!("{out}");
         }
-        println!("{out}");
     }
     Ok(())
 }

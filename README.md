@@ -33,6 +33,19 @@ pidx show dakota --tier standard
 pidx watch dakota
 ```
 
+## Human vs Machine Output
+
+The `pidx show` command is optimized for both human visual inspection and automated script pipelines:
+
+* **Interactive Terminals (`--format human`, Default)**:
+  Renders a beautiful, ANSI-colored, and boxed character card directly to `stderr`. The card automatically truncates long observations to clean terminal borders (width 76), and standard output is suppressed to prevent double-rendering in the terminal.
+* **Piped/Redirected Output (`--format human`)**:
+  If you pipe the output (e.g. `pidx show dakota | pbcopy` or `pidx show dakota > prompt.txt`), standard output is no longer a terminal. The CLI detects this and automatically outputs the **raw, unformatted text** directly to `stdout`, keeping prompt injection and tooling pipelines fully backward-compatible.
+* **Machine Pipelines (`--format json` or `--format adapter`)**:
+  Optimized for programmatic parsing by tools, downstream agents, or Tauri endpoints.
+
+---
+
 ## MCP setup
 
 Build and register the MCP server so AI clients can read and update profiles via tool calls.
@@ -65,7 +78,7 @@ pidx/               — core library + CLI binary
     ingestion.rs    — bridge packet routing + corroboration + decay
     output.rs       — tier-scaled rendering (T1/T2/T3)
     storage.rs      — file-per-user JSON persistence
-    main.rs         — CLI (clap derive)
+    main.rs         — CLI (clap derive, Human boxed display + TTY detection)
 pidx-mcp/           — stdio MCP server (rust-mcp-sdk)
 pidx-ui/            — Tauri desktop UI (experimental, not in v0)
 docs/               — schema spec + manual
@@ -88,3 +101,4 @@ PIDX ships alongside [mRAG](https://github.com/dakotav0/mrag), a local-first ass
 | **Bridge** | `.bridge.json` | Cross-agent session packets |
 
 See [on_agents.md](on_agents.md) for the design statement that ships with this bundle.
+
