@@ -10,7 +10,7 @@ use super::observation::{Observation, ObservationField, ObservationStatus};
 // ── Serde default helpers ─────────────────────────────────────────────────────
 
 fn default_semver() -> String {
-    "0.1.0".to_string()
+    "0.2.0".to_string()
 }
 fn default_threshold() -> f64 {
     0.20
