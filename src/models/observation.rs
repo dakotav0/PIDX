@@ -118,14 +118,18 @@ pub struct Observation {
 impl Observation {
     /// Compute effective confidence at a given point in time.
     ///
-    /// Applies exponential decay: `base × e^(−λ × days_elapsed)`.
+    /// Applies exponential decay: `base × e^(−λ × days_elapsed / weight)`.
+    /// Higher weight (from repeated reinforcement) slows decay.
     /// `decay_exempt` observations always return their base confidence unchanged.
     ///
+    /// If `calibration` is `Some`, uses configured decay rates from the
+    /// calibration seed. When `None`, falls back to hardcoded defaults.
     /// If `as_of` is `None`, the current UTC time is used.
     /// If the timestamp can't be parsed, falls back to base confidence (no decay).
     pub fn effective_confidence(
         &self,
         field_class: FieldClass,
+        calibration: Option<&crate::models::calibration::CalibrationSeed>,
         as_of: Option<chrono::DateTime<Utc>>,
     ) -> f64 {
         if self.decay_exempt {
@@ -134,12 +138,6 @@ impl Observation {
 
         let as_of = as_of.unwrap_or_else(Utc::now);
 
-        // Parse the stored ISO 8601 timestamp. Python writes these without a
-        // timezone suffix (e.g. "2024-01-15T10:30:00.123456"), so we parse as
-        // NaiveDateTime and treat it as UTC for the elapsed-days calculation.
-        // Rust writes RFC 3339 with an offset ("2026-04-07T06:45:37+00:00");
-        // Python writes naive ISO 8601 ("2026-04-07T06:45:37.123456").
-        // Try RFC 3339 first so Rust-generated timestamps decay correctly.
         let obs_time: DateTime<Utc> =
             if let Ok(dt) = DateTime::parse_from_rfc3339(&self.source.timestamp) {
                 dt.with_timezone(&Utc)
@@ -148,13 +146,17 @@ impl Observation {
             {
                 naive.and_utc()
             } else {
-                // Unrecognised format — return base confidence, don't decay.
                 return self.confidence;
             };
 
         let days = (as_of - obs_time).num_seconds() as f64 / 86400.0;
-        let lam = field_class.lambda();
-        self.confidence * (-lam * days).exp()
+        let lam = if let Some(cal) = calibration {
+            cal.lambda_for(field_class)
+        } else {
+            field_class.lambda()
+        };
+        let w = self.weight.max(0.1);
+        self.confidence * (-lam * days / w).exp()
     }
 }
 
@@ -189,14 +191,18 @@ impl ObservationField {
     ///
     /// Returns `None` if there are no confirmed observations (e.g. all are
     /// proposed, delta, or rejected).
-    pub fn active(&self, field_class: FieldClass) -> Option<&ObservationValue> {
+    pub fn active(
+        &self,
+        field_class: FieldClass,
+        calibration: Option<&crate::models::calibration::CalibrationSeed>,
+    ) -> Option<&ObservationValue> {
         let now = Utc::now();
         self.observations
             .iter()
             .filter(|o| o.status == ObservationStatus::Confirmed)
             .max_by(|a, b| {
-                let ca = a.effective_confidence(field_class, Some(now));
-                let cb = b.effective_confidence(field_class, Some(now));
+                let ca = a.effective_confidence(field_class, calibration, Some(now));
+                let cb = b.effective_confidence(field_class, calibration, Some(now));
                 // partial_cmp can return None for NaN; fall back to Equal so we
                 // don't panic on bad data.
                 ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
@@ -275,7 +281,7 @@ mod tests {
         let ts = past.to_rfc3339();
         let obs = make_obs(&ts);
 
-        let eff = obs.effective_confidence(FieldClass::Signal, None);
+        let eff = obs.effective_confidence(FieldClass::Signal, None, None);
         assert!(eff < 0.01, "RFC 3339 timestamp should decay: got {eff}");
     }
 
@@ -287,7 +293,7 @@ mod tests {
         let ts = past.format("%Y-%m-%dT%H:%M:%S%.6f").to_string();
         let obs = make_obs(&ts);
 
-        let eff = obs.effective_confidence(FieldClass::Signal, None);
+        let eff = obs.effective_confidence(FieldClass::Signal, None, None);
         assert!(
             eff < 0.01,
             "Naive ISO 8601 timestamp should decay: got {eff}"
@@ -302,7 +308,7 @@ mod tests {
         let mut obs = make_obs(&ts);
         obs.decay_exempt = true;
 
-        let eff = obs.effective_confidence(FieldClass::Signal, None);
+        let eff = obs.effective_confidence(FieldClass::Signal, None, None);
         assert!((eff - 1.0).abs() < f64::EPSILON);
     }
 }

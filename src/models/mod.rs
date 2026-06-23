@@ -4,11 +4,15 @@
 #![allow(unused_imports)]
 
 pub mod bridge;
+pub mod calibration;
 pub mod confidence;
 pub mod decay;
 pub mod evidence;
 pub mod observation;
+pub mod pidx_type;
 pub mod profile;
+pub mod reinforcement;
+pub mod semantic;
 
 // Flatten the most-used types to `crate::models::Foo` so callers don't need
 // to know which submodule each type lives in.

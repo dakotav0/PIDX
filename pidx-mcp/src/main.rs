@@ -65,7 +65,8 @@ async fn main() -> SdkResult<()> {
             "  pidx_status — per-field observation counts + open delta and review queue sizes\n",
             "  pidx_delta_list  — list unresolved delta conflicts with both candidate values\n",
             "  pidx_review_list — list observations flagged by the decay pass\n",
-            "  pidx_diff   — structured comparison of two profiles\n\n",
+            "  pidx_diff   — structured comparison of two profiles\n",
+            "  pidx_type   — show the PIDX-type derived from a user's calibration seed\n\n",
             "WRITE tools:\n",
             "  pidx_ingest        — ingest a single .bridge.json packet (path must be absolute)\n",
             "  pidx_mailbox_scan  — scan a directory for .bridge.json files and auto-ingest all; moves processed files to processed/ subdir\n",
@@ -79,7 +80,8 @@ async fn main() -> SdkResult<()> {
             "  pidx_decay    — run a decay pass; flags low-confidence obs to the review queue\n\n",
             "Workflow: ingest → status → confirm_all → show. ",
             "Use delta_list/resolve when status shows open deltas. ",
-            "Use decay + review_list/process during periodic maintenance."
+            "Use decay + review_list/process during periodic maintenance. ",
+            "Run calibrate_derive first to set per-user calibration, then type to inspect."
         ).into()),
         meta: None,
     };

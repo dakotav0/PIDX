@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::calibration::CalibrationSeed;
 use super::decay::FieldClass;
 use super::evidence::RegisterMetric;
 use super::observation::{Observation, ObservationField, ObservationStatus};
@@ -68,6 +69,13 @@ pub struct ProfileMeta {
     pub cleanup_policy: CleanupPolicy,
     #[serde(default)]
     pub overall_confidence: f64,
+    /// Optional calibration seed. When `None`, the engine uses hardcoded defaults.
+    /// Loaded from `~/.config/pidx/calibration.yml` at startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<CalibrationSeed>,
+    /// Cross-profile ties (relationship graph).
+    #[serde(default)]
+    pub ties: Vec<Tie>,
 }
 
 impl ProfileMeta {
@@ -81,6 +89,8 @@ impl ProfileMeta {
             updated: now,
             cleanup_policy: CleanupPolicy::default(),
             overall_confidence: 0.0,
+            calibration: None,
+            ties: Vec::new(),
         }
     }
 
@@ -139,6 +149,25 @@ pub struct ReviewItem {
     pub flagged_at: String,
     #[serde(default)]
     pub resolved: bool,
+}
+
+// ── Cross-profile ties ───────────────────────────────────────────────────────
+
+/// A cross-profile relationship link.
+///
+/// References another profile by its PIDX ID (not display name — IDs are
+/// globally unique, display names are not). Used to surface the relationship
+/// graph across profiles without scanning all bridge observations.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Tie {
+    /// Target profile ID.
+    pub target: String,
+    /// Relationship type — free-form, e.g. "collaborator", "covenant", "user".
+    pub relationship: String,
+    /// Tie strength 0.0–1.0.
+    pub weight: f64,
+    #[serde(default = "ProfileMeta::now_utc")]
+    pub created_at: String,
 }
 
 // ── Annotation ────────────────────────────────────────────────────────────────
@@ -326,27 +355,17 @@ impl ProfileDocument {
     pub fn recompute_overall_confidence(&mut self) {
         let now = Utc::now();
         let mut scores: Vec<f64> = Vec::new();
+        let cal = self.meta.calibration.as_ref();
 
-        // Nested function — takes an explicit slice rather than closing over anything,
-        // which keeps the borrow checker happy when we later mutate self.meta.
-        fn collect(
-            fields: &[ObservationField],
-            field_class: FieldClass,
-            now: DateTime<Utc>,
-            scores: &mut Vec<f64>,
-        ) {
-            for field in fields {
-                for obs in &field.observations {
-                    if obs.status == ObservationStatus::Confirmed {
-                        scores.push(obs.effective_confidence(field_class, Some(now)));
-                    }
+        // Collect confirmed observation confidences from a slice of fields.
+        for field in &self.identity.core {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Identity, cal, Some(now)));
                 }
             }
         }
 
-        collect(&self.identity.core, FieldClass::Identity, now, &mut scores);
-
-        // Reasoning fields are individual ObservationFields, not a slice, so inline:
         for field in [
             &self.identity.reasoning.style,
             &self.identity.reasoning.pattern,
@@ -354,21 +373,58 @@ impl ProfileDocument {
         ] {
             for obs in &field.observations {
                 if obs.status == ObservationStatus::Confirmed {
-                    scores.push(obs.effective_confidence(FieldClass::Identity, Some(now)));
+                    scores.push(obs.effective_confidence(FieldClass::Identity, cal, Some(now)));
                 }
             }
         }
 
-        collect(&self.domains, FieldClass::Domain, now, &mut scores);
-        collect(&self.values, FieldClass::Value, now, &mut scores);
-        collect(&self.signals.phrases, FieldClass::Signal, now, &mut scores);
-        collect(
-            &self.signals.avoidances,
-            FieldClass::Signal,
-            now,
-            &mut scores,
-        );
-        collect(&self.signals.rhythms, FieldClass::Signal, now, &mut scores);
+        for field in &self.domains {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Domain, cal, Some(now)));
+                }
+            }
+        }
+
+        for field in &self.values {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Value, cal, Some(now)));
+                }
+            }
+        }
+
+        for field in &self.signals.phrases {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Signal, cal, Some(now)));
+                }
+            }
+        }
+
+        for field in &self.signals.avoidances {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Signal, cal, Some(now)));
+                }
+            }
+        }
+
+        for field in &self.signals.rhythms {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Signal, cal, Some(now)));
+                }
+            }
+        }
+
+        for field in &self.signals.framings {
+            for obs in &field.observations {
+                if obs.status == ObservationStatus::Confirmed {
+                    scores.push(obs.effective_confidence(FieldClass::Signal, cal, Some(now)));
+                }
+            }
+        }
 
         for field in [
             &self.working.mode,
@@ -378,7 +434,7 @@ impl ProfileDocument {
         ] {
             for obs in &field.observations {
                 if obs.status == ObservationStatus::Confirmed {
-                    scores.push(obs.effective_confidence(FieldClass::Working, Some(now)));
+                    scores.push(obs.effective_confidence(FieldClass::Working, cal, Some(now)));
                 }
             }
         }

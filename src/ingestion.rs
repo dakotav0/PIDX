@@ -812,6 +812,8 @@ fn resolve_field_for_confirm<'a>(
 pub fn run_decay_pass(profile: &mut ProfileDocument, threshold: f64) -> usize {
     use chrono::Utc;
     let now = Utc::now();
+    // Extract calibration ref before the immutable borrow block.
+    let cal = profile.meta.calibration.as_ref();
 
     // ── Immutable scan ────────────────────────────────────────────────────────
     // Collect (path, obs_index, effective_conf) for all confirmed observations
@@ -821,12 +823,14 @@ pub fn run_decay_pass(profile: &mut ProfileDocument, threshold: f64) -> usize {
         let mut v: Vec<(String, usize, f64)> = Vec::new();
 
         let scan = |v: &mut Vec<_>, path: &str, field: &ObservationField, fc: FieldClass| {
+            // Use per-domain threshold from calibration if available
+            let dom_threshold = cal.map(|c| c.review_threshold_for(fc)).unwrap_or(threshold);
             for (idx, obs) in field.observations.iter().enumerate() {
                 if obs.status != ObservationStatus::Confirmed || obs.decay_exempt {
                     continue;
                 }
-                let c = obs.effective_confidence(fc, Some(now));
-                if c < threshold {
+                let c = obs.effective_confidence(fc, cal, Some(now));
+                if c < dom_threshold {
                     v.push((path.to_string(), idx, c));
                 }
             }
@@ -1116,4 +1120,28 @@ mod tests {
             assert!((obs.confidence - (0.61 + CORROBORATION_BONUS)).abs() < 1e-9);
         }
     }
+}
+
+// ── Ingest + passive reinforcement ──────────────────────────────────────────
+
+/// Ingest a bridge packet and run passive reinforcement.
+///
+/// This is the recommended entry point for the full pipeline: observations are
+/// ingested as usual, then confirmed observations that match newly proposed
+/// values get a weight bump (hardening). Observations that appear across
+/// multiple sessions decay slower over time.
+///
+/// Returns (proposed_count, delta_count, reinforcement_result).
+pub fn ingest_and_reinforce(
+    profile: &mut ProfileDocument,
+    packet: &BridgePacket,
+    filename: &str,
+) -> (
+    usize,
+    usize,
+    crate::models::reinforcement::ReinforcementResult,
+) {
+    let (proposed, deltas) = ingest_bridge_packet(profile, packet, filename);
+    let r = crate::models::reinforcement::reinforce_after_ingest(profile, None, filename);
+    (proposed, deltas, r)
 }

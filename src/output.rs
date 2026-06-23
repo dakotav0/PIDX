@@ -7,7 +7,7 @@
 //! Tiers (approximate token budgets):
 //!   Nano     ~180t   identity.core (top 3)
 //!   Micro    ~550t   + register scores, working.mode + working.feedback
-//!   Standard ~1400t  + domains, values, identity.reasoning, full working
+//!   Standard ~1400t  + PIDX-type, domains, values, identity.reasoning, full working
 //!   Rich     ~3200t  + signals, pinned annotations, delta_queue summary
 
 use std::fmt;
@@ -17,7 +17,7 @@ use chrono::Utc;
 use crate::models::{
     decay::FieldClass,
     evidence::RegisterMetric,
-    observation::{ObservationField, ObservationValue},
+    observation::{ObservationField, ObservationStatus, ObservationValue},
     profile::ProfileDocument,
 };
 
@@ -69,7 +69,7 @@ impl std::str::FromStr for Tier {
 /// label + weight), this returns the label alone — the domain section has its
 /// own formatter that also shows the weight percentage.
 fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
-    field.active(fc).map(|v| match v {
+    field.active(fc, None).map(|v| match v {
         ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
         ObservationValue::Number(n) => n.to_string(),
@@ -101,6 +101,48 @@ fn section_core(profile: &ProfileDocument, top_n: usize) -> Option<String> {
         return None;
     }
     Some(format!("### CORE\n{}", lines.join("\n")))
+}
+
+/// PIDX-type section: derived personality type from calibration seed.
+fn section_type(profile: &ProfileDocument) -> Option<String> {
+    let seed = profile.meta.calibration.as_ref()?;
+    let pt = crate::models::pidx_type::PidxType::from_calibration(seed);
+
+    let stability = if pt.identity_decay < 0.001 {
+        "very stable"
+    } else if pt.identity_decay < 0.002 {
+        "stable"
+    } else {
+        "fluid"
+    };
+    let signal = if pt.signal_decay > 0.01 {
+        "adaptive"
+    } else {
+        "consistent"
+    };
+
+    let mut lines = vec![
+        format!("**{}**", pt.summary()),
+        String::new(),
+        format!("| dimension | λ | trait |"),
+        format!("|-----------|------|-------|"),
+        format!("| identity  | {:.4} | {stability} |", pt.identity_decay),
+        format!("| signal    | {:.4} | {signal} |", pt.signal_decay),
+        format!("| working   | {:.4} | — |", pt.working_decay),
+        format!("| value     | {:.4} | — |", pt.value_decay),
+        format!("| domain    | {:.4} | — |", pt.domain_decay),
+        format!("| hardening | {:.1}× | — |", pt.hardening_multiplier),
+        format!("| threshold | {:.2} | — |", pt.review_threshold),
+    ];
+
+    let mbti = pt.mbti_code(Some(&profile.comm));
+    if !mbti.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("MBTI axes: **{}**", mbti));
+    }
+
+    let body = lines.join("\n");
+    Some(format!("### PIDX-TYPE\n{}", body))
 }
 
 fn draw_markdown_register_bar(score: f64) -> String {
@@ -177,7 +219,7 @@ fn section_working(profile: &ProfileDocument, fields: &[&str]) -> Option<String>
 fn section_domains(profile: &ProfileDocument) -> Option<String> {
     let mut entries: Vec<String> = Vec::new();
     for field in &profile.domains {
-        if let Some(v) = field.active(FieldClass::Domain) {
+        if let Some(v) = field.active(FieldClass::Domain, None) {
             let line = match v {
                 // Domain entries carry a weight — show it as a percentage.
                 ObservationValue::Domain(d) => {
@@ -339,7 +381,10 @@ pub fn render_tier_output(profile: &mut ProfileDocument, tier: Tier) -> String {
         };
     }
 
-    // ── Standard adds: domains, values, reasoning, full working ───────────
+    // ── Standard adds: PIDX-type, domains, values, reasoning, full working ──
+    if let Some(s) = section_type(profile) {
+        sections.push(s);
+    }
     if let Some(s) = section_domains(profile) {
         sections.push(s);
     }
@@ -427,4 +472,238 @@ pub fn compute_resonance(
 
     // Clamp to [0.5, 2.0] and round to 3 decimal places, matching Python.
     (score.clamp(0.5, 2.0) * 1000.0).round() / 1000.0
+}
+
+// ── Markdown export ─────────────────────────────────────────────────────────
+
+pub fn render_markdown_export(
+    profile: &mut ProfileDocument,
+    path: &std::path::Path,
+) -> Result<usize, std::io::Error> {
+    profile.recompute_overall_confidence();
+    let conf = profile.meta.overall_confidence;
+    let version = &profile.meta.version;
+    let id = &profile.meta.id;
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M %Z").to_string();
+
+    let mut doc = String::new();
+
+    doc.push_str(&format!("# PIDX Profile: {id}\n\n"));
+    doc.push_str(&format!(
+        "**Version:** {version} | **Confidence:** {conf:.2} | **Exported:** {now}\n\n"
+    ));
+    doc.push_str("---\n\n");
+
+    if let Some(cal) = &profile.meta.calibration {
+        doc.push_str(&format!("## Calibration Seed (v{})\n\n", cal.version));
+        doc.push_str(&format!(
+            "- Hardening multiplier: {:.1}\n",
+            cal.hardening_multiplier
+        ));
+        doc.push_str(&format!("- Max weight cap: {:.1}\n", cal.max_weight));
+        doc.push_str(&format!(
+            "- Review threshold: {:.2}\n",
+            cal.review_threshold
+        ));
+        doc.push_str("\n### Decay Rates\n\n");
+        let mut keys: Vec<&String> = cal.decay.keys().collect();
+        keys.sort();
+        for key in &keys {
+            let lam = cal.decay[*key];
+            doc.push_str(&format!("- **{key}**: λ = {lam}\n"));
+        }
+        if !cal.domains.is_empty() {
+            doc.push_str("\n### Domain Overrides\n\n");
+            let mut dkeys: Vec<&String> = cal.domains.keys().collect();
+            dkeys.sort();
+            for dk in &dkeys {
+                let dc = &cal.domains[*dk];
+                let mut parts = Vec::new();
+                if let Some(d) = dc.decay {
+                    parts.push(format!("decay={d}"));
+                }
+                if let Some(h) = dc.hardening_multiplier {
+                    parts.push(format!("hardening={h}"));
+                }
+                doc.push_str(&format!("- **{dk}**: {}\n", parts.join(", ")));
+            }
+        }
+        doc.push_str("\n---\n\n");
+    }
+
+    if !profile.identity.core.is_empty() {
+        doc.push_str("## Identity Core\n\n");
+        for (i, field) in profile.identity.core.iter().enumerate() {
+            if let Some(v) = field.active(FieldClass::Identity, None) {
+                let max_w = field
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Confirmed)
+                    .map(|o| o.weight)
+                    .fold(0.0_f64, f64::max);
+                let count = field.proposal_count;
+                doc.push_str(&format!(
+                    "{}. {}  \n   weight: {max_w:.2} | reinforced: {count}×\n\n",
+                    i + 1,
+                    value_display(v)
+                ));
+            }
+        }
+        doc.push('\n');
+    }
+
+    let now_utc = Utc::now();
+    let reg = &profile.comm;
+    let metrics: [(&str, &RegisterMetric); 6] = [
+        ("formality", &reg.formality),
+        ("directness", &reg.directness),
+        ("hedging", &reg.hedging),
+        ("humor", &reg.humor),
+        ("abstraction", &reg.abstraction),
+        ("affect", &reg.affect),
+    ];
+    if metrics.iter().any(|(_, m)| !m.evidence.is_empty()) {
+        doc.push_str("## Register\n\n");
+        for (name, metric) in &metrics {
+            if !metric.evidence.is_empty() {
+                let score = metric.score(Some(now_utc));
+                let label = metric.score_label(Some(now_utc));
+                doc.push_str(&format!("- **{name}**: {score:.1}/10 — {label}\n"));
+            }
+        }
+        doc.push('\n');
+    }
+
+    let wk = &profile.working;
+    for (name, field) in [
+        ("mode", &wk.mode),
+        ("pace", &wk.pace),
+        ("feedback", &wk.feedback),
+        ("pattern", &wk.pattern),
+    ] {
+        if let Some(v) = field.active(FieldClass::Working, None) {
+            if name == "mode" {
+                doc.push_str("## Working Style\n\n");
+            }
+            let max_w = field
+                .observations
+                .iter()
+                .filter(|o| o.status == ObservationStatus::Confirmed)
+                .map(|o| o.weight)
+                .fold(0.0_f64, f64::max);
+            doc.push_str(&format!(
+                "- **{name}**: {} (w:{max_w:.2})\n",
+                value_display(v)
+            ));
+        }
+    }
+    doc.push('\n');
+
+    if !profile.domains.is_empty() {
+        doc.push_str("## Domains\n\n");
+        for field in &profile.domains {
+            if let Some(v) = field.active(FieldClass::Domain, None) {
+                let max_w = field
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Confirmed)
+                    .map(|o| o.weight)
+                    .fold(0.0_f64, f64::max);
+                let label = match v {
+                    ObservationValue::Domain(d) => {
+                        format!("{} ({:.0}%)", d.label, d.weight * 100.0)
+                    }
+                    _ => value_display(v),
+                };
+                doc.push_str(&format!("- {label} | weight: {max_w:.2}\n"));
+            }
+        }
+        doc.push('\n');
+    }
+
+    if !profile.values.is_empty() {
+        doc.push_str("## Values\n\n");
+        for field in &profile.values {
+            if let Some(v) = field.active(FieldClass::Value, None) {
+                doc.push_str(&format!("- {}\n", value_display(v)));
+            }
+        }
+        doc.push('\n');
+    }
+
+    let s = &profile.signals;
+    let has_signals = [&s.phrases, &s.avoidances, &s.rhythms, &s.framings]
+        .iter()
+        .any(|slice| !slice.is_empty());
+    if has_signals {
+        doc.push_str("## Signals\n\n");
+        for (cat, fields) in [
+            ("phrases", s.phrases.as_slice()),
+            ("avoidances", s.avoidances.as_slice()),
+            ("rhythms", s.rhythms.as_slice()),
+            ("framings", s.framings.as_slice()),
+        ] {
+            let mut items: Vec<String> = Vec::new();
+            for field in fields {
+                if let Some(v) = field.active(FieldClass::Signal, None) {
+                    let max_w = field
+                        .observations
+                        .iter()
+                        .filter(|o| o.status == ObservationStatus::Confirmed)
+                        .map(|o| o.weight)
+                        .fold(0.0_f64, f64::max);
+                    let count = field.proposal_count;
+                    items.push(format!("  - {} (w:{max_w:.2}, ×{count})", value_display(v)));
+                }
+            }
+            if !items.is_empty() {
+                doc.push_str(&format!("**{cat}**\n{}\n\n", items.join("\n")));
+            }
+        }
+    }
+
+    let pinned: Vec<_> = profile.annotations.iter().filter(|a| a.pinned).collect();
+    if !pinned.is_empty() {
+        doc.push_str("## Annotations\n\n");
+        for a in &pinned {
+            doc.push_str(&format!(
+                "- [{author}] {note}\n",
+                author = a.author,
+                note = a.note
+            ));
+        }
+        doc.push('\n');
+    }
+
+    if !profile.meta.ties.is_empty() {
+        doc.push_str("## Ties\n\n");
+        for tie in &profile.meta.ties {
+            doc.push_str(&format!(
+                "- **{target}** — {rel} (w:{w:.2})\n",
+                target = tie.target,
+                rel = tie.relationship,
+                w = tie.weight
+            ));
+        }
+        doc.push('\n');
+    }
+
+    let total_confirmed: usize = profile
+        .identity
+        .core
+        .iter()
+        .chain(profile.domains.iter())
+        .chain(profile.values.iter())
+        .flat_map(|f| f.observations.iter())
+        .filter(|o| o.status == ObservationStatus::Confirmed)
+        .count();
+    doc.push_str(&format!(
+        "---\n\n*{total_confirmed} confirmed observations | Profile confidence: {conf:.2}*\n"
+    ));
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, &doc)?;
+    Ok(doc.len())
 }

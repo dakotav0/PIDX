@@ -256,6 +256,28 @@ pub struct PidxMailboxScanTool {
     pub directory: Option<String>,
 }
 
+/// Get the PIDX-type derived from a user's calibration seed.
+#[macros::mcp_tool(
+    name = "pidx_type",
+    description = "Get the PIDX-type derived from a user's calibration seed. Returns decay lambdas, hardening multiplier, review threshold, and MBTI axes. Run pidx_calibrate_derive first if the user has no calibration seed."
+)]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PidxTypeTool {
+    /// User ID (e.g. `dakota`)
+    pub user_id: String,
+}
+
+/// Derive a calibration seed from a user's profile observations and store it in the profile.
+#[macros::mcp_tool(
+    name = "pidx_calibrate_derive",
+    description = "Analyze a user's confirmed observations to derive optimal decay rates, hardening multiplier, and review threshold. Stores the calibration seed in the profile and returns the derived PIDX-type."
+)]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PidxCalibrateDeriveTool {
+    /// User ID (e.g. `dakota`)
+    pub user_id: String,
+}
+
 // Register all tools — generates `PidxTools` enum + `PidxTools::tools()` vec
 tool_box!(
     PidxTools,
@@ -276,7 +298,9 @@ tool_box!(
         PidxReviewProcessTool,
         PidxAnnotateTool,
         PidxDiffTool,
-        PidxDecayTool
+        PidxDecayTool,
+        PidxTypeTool,
+        PidxCalibrateDeriveTool,
     ]
 );
 
@@ -338,6 +362,8 @@ impl ServerHandler for PidxHandler {
             PidxTools::PidxAnnotateTool(t) => self.handle_annotate(t).await,
             PidxTools::PidxDiffTool(t) => self.handle_diff(t).await,
             PidxTools::PidxDecayTool(t) => self.handle_decay(t).await,
+            PidxTools::PidxTypeTool(t) => self.handle_type(t).await,
+            PidxTools::PidxCalibrateDeriveTool(t) => self.handle_calibrate_derive(t).await,
         }
     }
 }
@@ -940,6 +966,66 @@ impl PidxHandler {
         }))
     }
 
+    async fn handle_type(&self, t: PidxTypeTool) -> ToolResult {
+        use pidx::models::calibration::get_or_create_calibration;
+        use pidx::models::pidx_type::PidxType;
+
+        let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
+        let seed = profile
+            .meta
+            .calibration
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(get_or_create_calibration);
+        let pt = PidxType::from_calibration(&seed);
+
+        info!(user_id = %t.user_id, "pidx_type");
+        json_text(&serde_json::json!({
+            "user_id": t.user_id,
+            "summary": pt.summary(),
+            "calibration_version": pt.calibration_version,
+            "identity_decay": pt.identity_decay,
+            "signal_decay": pt.signal_decay,
+            "working_decay": pt.working_decay,
+            "value_decay": pt.value_decay,
+            "domain_decay": pt.domain_decay,
+            "hardening_multiplier": pt.hardening_multiplier,
+            "review_threshold": pt.review_threshold,
+            "domain_overrides": pt.domain_overrides,
+            "mbti_hint": pt.mbti_hint,
+            "mbti_code": pt.mbti_code(Some(&profile.comm)),
+        }))
+    }
+
+    async fn handle_calibrate_derive(&self, t: PidxCalibrateDeriveTool) -> ToolResult {
+        use pidx::models::calibration::derive_and_store_calibration;
+        use pidx::models::pidx_type::PidxType;
+
+        let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
+        derive_and_store_calibration(&mut profile);
+        self.store.save(&mut profile).map_err(tool_err)?;
+
+        let seed = profile.meta.calibration.as_ref().unwrap();
+        let pt = PidxType::from_calibration(seed);
+
+        info!(user_id = %t.user_id, "pidx_calibrate_derive");
+        json_text(&serde_json::json!({
+            "ok": true,
+            "user_id": t.user_id,
+            "version": profile.meta.version,
+            "summary": pt.summary(),
+            "identity_decay": pt.identity_decay,
+            "signal_decay": pt.signal_decay,
+            "working_decay": pt.working_decay,
+            "value_decay": pt.value_decay,
+            "domain_decay": pt.domain_decay,
+            "hardening_multiplier": pt.hardening_multiplier,
+            "review_threshold": pt.review_threshold,
+            "domain_overrides": pt.domain_overrides,
+            "mbti_code": pt.mbti_code(Some(&profile.comm)),
+        }))
+    }
+
     async fn handle_mailbox_scan(&self, t: PidxMailboxScanTool) -> ToolResult {
         use pidx::models::bridge::BridgePacket;
         use std::path::PathBuf;
@@ -1122,7 +1208,7 @@ fn resolve_field_mut<'a>(
 fn active_text(field: &pidx::models::observation::ObservationField) -> Option<String> {
     use pidx::models::decay::FieldClass;
     use pidx::models::observation::ObservationValue;
-    field.active(FieldClass::Working).map(|v| match v {
+    field.active(FieldClass::Working, None).map(|v| match v {
         ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
         ObservationValue::Number(n) => n.to_string(),

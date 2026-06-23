@@ -208,6 +208,10 @@ enum Command {
         /// Output resolution tier
         #[arg(long, short, value_enum, default_value_t = Tier::Standard)]
         tier: Tier,
+        /// Export as standalone markdown file instead of context block.
+        /// Writes to ~/.config/pidx/exports/{user_id}-{date}.md
+        #[arg(long)]
+        md: bool,
     },
 
     /// Print a summary of all observations and their statuses
@@ -309,6 +313,29 @@ enum Command {
         #[arg(long, short)]
         dir: Option<std::path::PathBuf>,
     },
+
+    /// Manage the calibration seed (decay rates, hardening, thresholds)
+    #[command(subcommand)]
+    Calibrate(CalibrateCmd),
+
+    /// Export a profile as a standalone markdown document
+    Export {
+        user_id: String,
+        /// Output path (default: ~/.config/pidx/exports/{user_id}-{date}.md)
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+    },
+
+    /// Manage cross-profile ties (relationship graph)
+    #[command(subcommand)]
+    Tie(TieCmd),
+
+    /// Show the PIDX-type derived from the calibration seed.
+    /// Defaults to the global calibration; pass --user-id for per-user.
+    PidxType {
+        #[arg(long, short)]
+        user_id: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -338,6 +365,71 @@ enum ReviewCmd {
         /// Action to take: 'solidify' or 'discard'
         #[arg(long, value_parser = ["solidify", "discard"])]
         action: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CalibrateCmd {
+    /// Show the calibration seed for a user.
+    /// Defaults to global calibration when no --user-id is given.
+    Show {
+        #[arg(long, short)]
+        user_id: Option<String>,
+    },
+    /// Set a domain-level override for a user's calibration.
+    Set {
+        #[arg(long, short)]
+        user_id: Option<String>,
+        /// Domain key (e.g. "signal", "identity", "working")
+        domain: String,
+        /// Override decay rate
+        #[arg(long)]
+        decay: Option<f64>,
+        /// Override hardening multiplier
+        #[arg(long)]
+        hardening: Option<f64>,
+        /// Override max weight cap
+        #[arg(long)]
+        max_weight: Option<f64>,
+        /// Override review threshold
+        #[arg(long)]
+        review_threshold: Option<f64>,
+    },
+    /// Reset a domain back to inheritance (remove its override)
+    Reset {
+        #[arg(long, short)]
+        user_id: Option<String>,
+        /// Domain key to reset
+        domain: String,
+    },
+    /// Derive a calibration seed from profile observations.
+    Derive {
+        /// User to derive calibration for
+        user_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TieCmd {
+    /// List all ties for a profile
+    List { user_id: String },
+    /// Add or update a tie to another profile
+    Add {
+        user_id: String,
+        /// Target profile ID
+        target: String,
+        /// Relationship type (e.g. "collaborator", "covenant")
+        #[arg(long, short)]
+        relationship: String,
+        /// Tie strength 0.0–1.0
+        #[arg(long, default_value_t = 0.50)]
+        weight: f64,
+    },
+    /// Remove a tie to another profile
+    Remove {
+        user_id: String,
+        /// Target profile ID to remove
+        target: String,
     },
 }
 
@@ -440,7 +532,7 @@ fn val_str(v: &ObservationValue) -> String {
 
 /// Active text value for a field (the confirmed obs with highest confidence), or None.
 fn active_text(field: &ObservationField, fc: FieldClass) -> Option<String> {
-    field.active(fc).map(|v| match v {
+    field.active(fc, None).map(|v| match v {
         ObservationValue::Text(s) => s.clone(),
         ObservationValue::Domain(d) => d.label.clone(),
         ObservationValue::Number(n) => n.to_string(),
@@ -540,11 +632,24 @@ fn print_boxed_card(title: &str, content: &[String]) {
 
 // ── Command handlers ──────────────────────────────────────────────────────────
 
-fn cmd_show(user_id: &str, tier: Tier, format: Format) -> Result<()> {
-    use std::io::IsTerminal;
-
+fn cmd_show(user_id: &str, tier: Tier, md: bool, format: Format) -> Result<()> {
     let store = ProfileStore::new(ProfileStore::default_dir());
     let mut profile = store.load_or_create(user_id)?;
+
+    // --md flag: export as standalone markdown file
+    if md {
+        let export_dir = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("pidx")
+            .join("exports");
+        let date = chrono::Local::now().format("%Y%m%d").to_string();
+        let path = export_dir.join(format!("{user_id}-{date}.md"));
+        output::render_markdown_export(&mut profile, &path)?;
+        eprintln!("Markdown written to {}", path.display());
+        return Ok(());
+    }
+
+    use std::io::IsTerminal;
 
     if format.is_machine() {
         let json = build_show_json(&mut profile, tier);
@@ -650,7 +755,7 @@ fn build_show_json(profile: &mut ProfileDocument, tier: Tier) -> ShowJson {
         domains = profile
             .domains
             .iter()
-            .filter_map(|f| f.active(FieldClass::Domain))
+            .filter_map(|f| f.active(FieldClass::Domain, None))
             .map(|v| match v {
                 ObservationValue::Domain(d) => DomainJson {
                     label: d.label.clone(),
@@ -2017,6 +2122,251 @@ fn cmd_watch(user_id: &str, dir: Option<std::path::PathBuf>, format: Format) -> 
     Ok(())
 }
 
+fn cmd_export(user_id: &str, output: Option<std::path::PathBuf>) -> Result<()> {
+    let store = ProfileStore::new(ProfileStore::default_dir());
+    let mut profile = store.load_or_create(user_id)?;
+
+    let path = output.unwrap_or_else(|| {
+        let export_dir = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("pidx")
+            .join("exports");
+        let date = chrono::Local::now().format("%Y%m%d").to_string();
+        export_dir.join(format!("{user_id}-{date}.md"))
+    });
+
+    let bytes = output::render_markdown_export(&mut profile, &path)?;
+    eprintln!("Markdown export: {bytes} bytes → {}", path.display());
+    Ok(())
+}
+
+fn cmd_pidx_type(user_id: Option<&str>) -> Result<()> {
+    use crate::models::calibration::get_or_create_calibration;
+    use crate::models::pidx_type::PidxType;
+
+    let (seed, register) = match user_id {
+        Some(uid) => {
+            let store = ProfileStore::new(ProfileStore::default_dir());
+            let profile = store.load_or_create(uid)?;
+            let seed = profile
+                .meta
+                .calibration
+                .clone()
+                .unwrap_or_else(get_or_create_calibration);
+            let reg = profile.comm.clone();
+            (seed, Some(reg))
+        }
+        None => (get_or_create_calibration(), None),
+    };
+    let pt = PidxType::from_calibration(&seed);
+    println!("{}", pt.summary());
+    println!("  identity λ: {:.4}", pt.identity_decay);
+    println!("  signal   λ: {:.4}", pt.signal_decay);
+    println!("  working  λ: {:.4}", pt.working_decay);
+    println!("  value    λ: {:.4}", pt.value_decay);
+    println!("  domain   λ: {:.4}", pt.domain_decay);
+    println!("  hardening:  {:.1}", pt.hardening_multiplier);
+    println!("  threshold:  {:.2}", pt.review_threshold);
+    println!("  overrides:  {}", pt.domain_overrides);
+    println!("  mbti axes:  {}", pt.mbti_code(register.as_ref()));
+    Ok(())
+}
+
+fn cmd_tie(sub: TieCmd) -> Result<()> {
+    use crate::models::profile::Tie;
+
+    match sub {
+        TieCmd::List { user_id } => {
+            let store = ProfileStore::new(ProfileStore::default_dir());
+            let profile = store.load_or_create(&user_id)?;
+            if profile.meta.ties.is_empty() {
+                eprintln!("No ties for '{user_id}'.");
+            } else {
+                for tie in &profile.meta.ties {
+                    println!(
+                        "{target}  {rel:20}  w:{w:.2}",
+                        target = tie.target,
+                        rel = tie.relationship,
+                        w = tie.weight
+                    );
+                }
+            }
+        }
+        TieCmd::Add {
+            user_id,
+            target,
+            relationship,
+            weight,
+        } => {
+            let store = ProfileStore::new(ProfileStore::default_dir());
+            let mut profile = store.load_or_create(&user_id)?;
+            let now = ProfileMeta::now_utc();
+            // Update existing tie or add new one
+            if let Some(existing) = profile.meta.ties.iter_mut().find(|t| t.target == target) {
+                existing.relationship = relationship.clone();
+                existing.weight = weight;
+                existing.created_at = now;
+                eprintln!("Tie '{target}' updated ({relationship}, w:{weight:.2}).");
+            } else {
+                profile.meta.ties.push(Tie {
+                    target: target.clone(),
+                    relationship: relationship.clone(),
+                    weight,
+                    created_at: now,
+                });
+                eprintln!("Tie '{target}' added ({relationship}, w:{weight:.2}).");
+            }
+            store.save(&mut profile)?;
+        }
+        TieCmd::Remove { user_id, target } => {
+            let store = ProfileStore::new(ProfileStore::default_dir());
+            let mut profile = store.load_or_create(&user_id)?;
+            let len_before = profile.meta.ties.len();
+            profile.meta.ties.retain(|t| t.target != target);
+            if profile.meta.ties.len() < len_before {
+                eprintln!("Tie '{target}' removed.");
+                store.save(&mut profile)?;
+            } else {
+                eprintln!("No tie to '{target}' found.");
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── Calibrate command ─────────────────────────────────────────────────────────
+
+use crate::models::calibration::{
+    calibrate_domain, derive_and_store_calibration, get_or_create_calibration, reset_domain,
+    save_calibration, CalibrationSeed,
+};
+
+fn load_global_or_profile(
+    uid_opt: Option<&str>,
+) -> Result<(ProfileStore, Option<ProfileDocument>, CalibrationSeed)> {
+    match uid_opt {
+        Some(uid) => {
+            let store = ProfileStore::new(ProfileStore::default_dir());
+            let profile = store.load_or_create(uid)?;
+            let seed = profile
+                .meta
+                .calibration
+                .clone()
+                .unwrap_or_else(get_or_create_calibration);
+            Ok((store, Some(profile), seed))
+        }
+        None => {
+            let seed = get_or_create_calibration();
+            Ok((ProfileStore::new(ProfileStore::default_dir()), None, seed))
+        }
+    }
+}
+
+fn store_calibration(
+    store: &ProfileStore,
+    profile: &mut Option<ProfileDocument>,
+    seed: CalibrationSeed,
+) -> Result<()> {
+    match profile {
+        Some(p) => {
+            p.meta.calibration = Some(seed);
+            store.save(p)?;
+        }
+        None => {
+            save_calibration(&seed)?;
+        }
+    }
+    Ok(())
+}
+
+fn cmd_calibrate(sub: &CalibrateCmd) -> Result<()> {
+    match sub {
+        CalibrateCmd::Show { user_id } => {
+            let (_, _, seed) = load_global_or_profile(user_id.as_deref())?;
+            let yaml = serde_yaml::to_string(&seed)?;
+            println!("{yaml}");
+        }
+        CalibrateCmd::Set {
+            user_id,
+            domain,
+            decay,
+            hardening,
+            max_weight,
+            review_threshold,
+        } => {
+            let uid = user_id.as_deref();
+            let (store, mut profile, mut seed) = load_global_or_profile(uid)?;
+            let version = seed.version;
+            calibrate_domain(
+                &mut seed,
+                domain,
+                *decay,
+                *hardening,
+                *max_weight,
+                *review_threshold,
+            );
+            store_calibration(&store, &mut profile, seed)?;
+            eprintln!(
+                "Calibration updated (v{}): domain '{domain}' override set.",
+                version + 1
+            );
+            if let Some(d) = decay {
+                eprintln!("  decay: {d}");
+            }
+            if let Some(h) = hardening {
+                eprintln!("  hardening: {h}");
+            }
+            if let Some(mw) = max_weight {
+                eprintln!("  max_weight: {mw}");
+            }
+            if let Some(rt) = review_threshold {
+                eprintln!("  review_threshold: {rt}");
+            }
+            if let Some(uid) = uid {
+                eprintln!("  (stored in profile '{uid}')");
+            }
+        }
+        CalibrateCmd::Reset { user_id, domain } => {
+            let uid = user_id.as_deref();
+            let (store, mut profile, mut seed) = load_global_or_profile(uid)?;
+            if reset_domain(&mut seed, domain) {
+                store_calibration(&store, &mut profile, seed)?;
+                eprintln!("Domain '{domain}' reset — inheriting defaults.");
+                if let Some(uid) = uid {
+                    eprintln!("  (stored in profile '{uid}')");
+                }
+            } else {
+                eprintln!("Domain '{domain}' has no override to reset.");
+            }
+        }
+        CalibrateCmd::Derive { user_id } => {
+            let store = ProfileStore::new(ProfileStore::default_dir());
+            let mut profile = store.load_or_create(user_id)?;
+            derive_and_store_calibration(&mut profile);
+            store.save(&mut profile)?;
+            eprintln!(
+                "Calibration derived and stored for '{user_id}' (v{}).",
+                profile.meta.version
+            );
+
+            // Print the derived type for inspection
+            let seed = profile.meta.calibration.as_ref().unwrap();
+            let pt = crate::models::pidx_type::PidxType::from_calibration(seed);
+            println!("{}", pt.summary());
+            println!("  identity  λ: {:.4}", pt.identity_decay);
+            println!("  signal    λ: {:.4}", pt.signal_decay);
+            println!("  working   λ: {:.4}", pt.working_decay);
+            println!("  value     λ: {:.4}", pt.value_decay);
+            println!("  domain    λ: {:.4}", pt.domain_decay);
+            println!("  hardening:   {:.1}", pt.hardening_multiplier);
+            println!("  threshold:   {:.2}", pt.review_threshold);
+            println!("  overrides:   {}", pt.domain_overrides);
+            println!("  mbti axes:   {}", pt.mbti_code(Some(&profile.comm)));
+        }
+    }
+    Ok(())
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
@@ -2036,7 +2386,7 @@ fn main() {
     let fmt = cli.format;
 
     let result = match cli.command {
-        Command::Show { user_id, tier } => cmd_show(&user_id, tier, fmt),
+        Command::Show { user_id, tier, md } => cmd_show(&user_id, tier, md, fmt),
         Command::Status { user_id } => cmd_status(&user_id, fmt),
         Command::Confirm {
             user_id,
@@ -2072,6 +2422,10 @@ fn main() {
         Command::ListUsers => cmd_list_users(fmt),
         Command::Decay { user_id, threshold } => cmd_decay(&user_id, threshold, fmt),
         Command::Watch { user_id, dir } => cmd_watch(&user_id, dir, fmt),
+        Command::Calibrate(sub) => cmd_calibrate(&sub),
+        Command::Export { user_id, output } => cmd_export(&user_id, output),
+        Command::Tie(sub) => cmd_tie(sub),
+        Command::PidxType { user_id } => cmd_pidx_type(user_id.as_deref()),
     };
 
     if let Err(e) = result {
