@@ -5,6 +5,7 @@
 
 pub mod bridge;
 pub mod calibration;
+pub mod compaction;
 pub mod confidence;
 pub mod decay;
 pub mod evidence;
@@ -20,8 +21,8 @@ pub use confidence::{get_base_confidence, Origination, CORROBORATION_BONUS};
 pub use decay::{decay_factor, FieldClass};
 pub use evidence::{Evidence, EvidenceType, RegisterMetric, RegisterMetricName};
 pub use observation::{
-    DomainEntry, Observation, ObservationField, ObservationSource, ObservationStatus,
-    ObservationValue,
+    ArchivedField, DomainEntry, Observation, ObservationField, ObservationSource,
+    ObservationStatus, ObservationValue,
 };
 pub use profile::{
     Annotation, BridgeLog, BridgeLogEntry, CleanupPolicy, DeltaItem, Identity, IdentityReasoning,

@@ -63,6 +63,7 @@ async fn main() -> SdkResult<()> {
             "  pidx_list   — enumerate all profiles (user IDs, confidence, last-updated)\n",
             "  pidx_show   — fetch a tier-scaled context block (tier: T1/T2/T3)\n",
             "  pidx_status — per-field observation counts + open delta and review queue sizes\n",
+            "  pidx_compact — move dead fields (all observations archived/rejected) into the profile archive, keeping live lists dense; audit trail preserved\n",
             "  pidx_delta_list  — list unresolved delta conflicts with both candidate values\n",
             "  pidx_review_list — list observations flagged by the decay pass\n",
             "  pidx_diff   — structured comparison of two profiles\n",

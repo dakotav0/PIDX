@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 use super::calibration::CalibrationSeed;
 use super::decay::FieldClass;
 use super::evidence::RegisterMetric;
-use super::observation::{Observation, ObservationField, ObservationStatus};
+use super::observation::{ArchivedField, Observation, ObservationField, ObservationStatus};
 
 // ── Serde default helpers ─────────────────────────────────────────────────────
 
 fn default_semver() -> String {
-    "0.2.0".to_string()
+    "0.3.0".to_string()
 }
 fn default_threshold() -> f64 {
     0.20
@@ -316,8 +316,20 @@ pub struct ProfileDocument {
     pub signals: Signals,
     #[serde(default)]
     pub working: Working,
+    /// Catch-all bucket for observations whose dot-path field has no dedicated
+    /// slot. Keyed by the raw bridge-packet field name (e.g. "moment",
+    /// "relational", "pattern"). Lossless holding pen — promote a key to a
+    /// first-class field when it earns one. `#[serde(default)]` keeps old
+    /// profiles loading without migration.
+    #[serde(default)]
+    pub extra: std::collections::BTreeMap<String, Vec<ObservationField>>,
     #[serde(default)]
     pub annotations: Vec<Annotation>,
+    /// Tombstone graveyard — dead fields moved here by compaction. Never
+    /// compacted itself: archived/rejected observations are permanent record.
+    /// `#[serde(default)]` keeps old profiles loading without migration.
+    #[serde(default)]
+    pub archive: Vec<ArchivedField>,
     #[serde(default)]
     pub delta_queue: Vec<DeltaItem>,
     #[serde(default)]
@@ -340,7 +352,9 @@ impl ProfileDocument {
             values: Vec::new(),
             signals: Signals::default(),
             working: Working::default(),
+            extra: std::collections::BTreeMap::new(),
             annotations: Vec::new(),
+            archive: Vec::new(),
             delta_queue: Vec::new(),
             review_queue: Vec::new(),
             bridge_log: BridgeLog::default(),

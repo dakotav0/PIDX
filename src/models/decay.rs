@@ -22,6 +22,10 @@ pub enum FieldClass {
     Signal,
     /// User and system notes. Never decays (λ = 0.0).
     Annotation,
+    /// Holding pen for observations whose field path has no dedicated slot.
+    /// Medium decay (λ = 0.0120) — faster than Working, slower than Signal.
+    /// Observations here haven't earned a canonical home yet but shouldn't be lost.
+    Extra,
 }
 
 impl FieldClass {
@@ -38,6 +42,7 @@ impl FieldClass {
             FieldClass::Working => 0.0070,
             FieldClass::Signal => 0.0200,
             FieldClass::Annotation => 0.0,
+            FieldClass::Extra => 0.0120,
         }
     }
 }

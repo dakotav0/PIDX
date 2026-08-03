@@ -269,6 +269,7 @@ impl FieldClass {
             FieldClass::Working => "working",
             FieldClass::Signal => "signal",
             FieldClass::Annotation => "annotation",
+            FieldClass::Extra => "extra",
         }
     }
 

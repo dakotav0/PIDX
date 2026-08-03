@@ -70,8 +70,6 @@ enum FieldRoute<'a> {
     DedupField(&'a mut ObservationField),
     /// `"register.evidence"` — additive path, handled separately.
     RegisterEvidence,
-    /// Unrecognized path — skip silently, matching Python behaviour.
-    Unknown,
 }
 
 /// Resolve a dot-path string to a mutable reference into the profile.
@@ -205,7 +203,20 @@ fn route_field<'a>(
         "working.feedback" => FieldRoute::Field(&mut profile.working.feedback, FieldClass::Working),
         "working.pattern" => FieldRoute::Field(&mut profile.working.pattern, FieldClass::Working),
 
-        _ => FieldRoute::Unknown,
+        // Catch-all: any unrecognized field path lands in the `extra` bucket.
+        other => {
+            let list = profile.extra.entry(other.to_string()).or_default();
+            let match_res = find_matching_field(list, incoming);
+            let (idx, has_proposed) = match_res.unwrap_or_else(|| {
+                list.push(ObservationField::default());
+                (list.len() - 1, false)
+            });
+            if has_proposed {
+                FieldRoute::DedupField(&mut list[idx])
+            } else {
+                FieldRoute::Field(&mut list[idx], FieldClass::Extra)
+            }
+        }
     }
 }
 
@@ -330,6 +341,7 @@ fn ingest_one_observation(
     src: &BridgeObsSource<'_>,
     proposed: &mut usize,
     deltas: &mut usize,
+    extra_keys: &mut std::collections::HashSet<String>,
 ) {
     if field == "register.evidence" {
         ingest_evidence_value(profile, value);
@@ -360,8 +372,19 @@ fn ingest_one_observation(
 
     let mut pending_delta: Option<DeltaItem> = None;
 
+    // Track extra bucket keys for reporting.
+    let is_extra = !field.starts_with("identity.")
+        && !field.starts_with("domains")
+        && !field.starts_with("values")
+        && !field.starts_with("signals.")
+        && !field.starts_with("working.")
+        && field != "register.evidence";
+    if is_extra {
+        extra_keys.insert(field.to_string());
+    }
+
     match route_field(profile, field, value) {
-        FieldRoute::Unknown | FieldRoute::RegisterEvidence => return,
+        FieldRoute::RegisterEvidence => return,
         FieldRoute::DedupField(f) => {
             f.proposal_count = f.proposal_count.saturating_add(1);
             *proposed += 1;
@@ -405,14 +428,19 @@ fn ingest_one_observation(
 /// `confirm_all_proposed` on each). If the packet carries `dyadic_notes`,
 /// they are stored as a decay-exempt annotation on the profile.
 ///
-/// Returns `(observations_proposed, deltas_flagged)`.
+/// Returns `(observations_proposed, deltas_flagged, extra_keys)`.
+/// `extra_keys` lists which catch-all bucket keys were touched — these are
+/// field paths that have no dedicated slot in the profile (e.g. "moment",
+/// "relational", "pattern"). Callers should surface this so producers learn
+/// what vocabulary the engine doesn't yet speak natively.
 pub fn ingest_bridge_packet(
     profile: &mut ProfileDocument,
     packet: &BridgePacket,
     filename: &str,
-) -> (usize, usize) {
+) -> (usize, usize, Vec<String>) {
     let mut proposed = 0usize;
     let mut deltas = 0usize;
+    let mut extra_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── v0.1: flat observations array ─────────────────────────────────────────
     for bo in &packet.observations {
@@ -424,6 +452,7 @@ pub fn ingest_bridge_packet(
             &src,
             &mut proposed,
             &mut deltas,
+            &mut extra_keys,
         );
     }
 
@@ -441,6 +470,7 @@ pub fn ingest_bridge_packet(
                 &src,
                 &mut proposed,
                 &mut deltas,
+                &mut extra_keys,
             );
         }
     }
@@ -488,7 +518,10 @@ pub fn ingest_bridge_packet(
         .pending_filenames
         .retain(|f| f != filename);
 
-    (proposed, deltas)
+    let mut extra_vec: Vec<String> = extra_keys.into_iter().collect();
+    extra_vec.sort();
+
+    (proposed, deltas, extra_vec)
 }
 
 // ── Corroboration ─────────────────────────────────────────────────────────────
@@ -659,13 +692,17 @@ pub fn confirm_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<
         push_if("working.pace", &profile.working.pace);
         push_if("working.feedback", &profile.working.feedback);
         push_if("working.pattern", &profile.working.pattern);
+        for (key, fields) in &profile.extra {
+            for (i, field) in fields.iter().enumerate() {
+                push_if(&format!("extra.{key}.{i}"), field);
+            }
+        }
         v
     };
 
     let mut confirmed_paths = Vec::new();
     for path in &matching {
-        // Resolve path to a mutable field reference using the same rules as route_field.
-        let field_opt = resolve_field_for_confirm(profile, path);
+        let field_opt = resolve_field_mut(profile, path);
         if let Some(field) = field_opt {
             let mut any = false;
             for obs in field.observations.iter_mut() {
@@ -738,12 +775,17 @@ pub fn reject_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<S
         push_if("working.pace", &profile.working.pace);
         push_if("working.feedback", &profile.working.feedback);
         push_if("working.pattern", &profile.working.pattern);
+        for (key, fields) in &profile.extra {
+            for (i, field) in fields.iter().enumerate() {
+                push_if(&format!("extra.{key}.{i}"), field);
+            }
+        }
         v
     };
 
     let mut rejected_paths = Vec::new();
     for path in &matching {
-        let field_opt = resolve_field_for_confirm(profile, path);
+        let field_opt = resolve_field_mut(profile, path);
         if let Some(field) = field_opt {
             let mut any = false;
             for obs in field.observations.iter_mut() {
@@ -760,12 +802,23 @@ pub fn reject_all_proposed(profile: &mut ProfileDocument, prefix: &str) -> Vec<S
     rejected_paths
 }
 
-/// Minimal path-resolver for the confirm-all operation. Mirrors the CLI's
-/// `resolve_field_mut` but lives in the library so Tauri can share it.
-fn resolve_field_for_confirm<'a>(
+/// Resolve a public field path to its mutable observation field.
+///
+/// Extra-bucket keys are raw producer field paths and may themselves contain
+/// dots or hyphens. Their status path is `extra.<key>.<field-slot>`, so parse
+/// the numeric slot from the right rather than splitting the key on dots.
+pub fn resolve_field_mut<'a>(
     profile: &'a mut ProfileDocument,
     path: &str,
 ) -> Option<&'a mut ObservationField> {
+    if let Some(extra_path) = path.strip_prefix("extra.") {
+        let (key, field_slot) = extra_path.rsplit_once('.')?;
+        return profile
+            .extra
+            .get_mut(key)?
+            .get_mut(field_slot.parse::<usize>().ok()?);
+    }
+
     let parts: Vec<&str> = path.splitn(3, '.').collect();
     match parts.as_slice() {
         ["identity", "core", rest] => profile.identity.core.get_mut(rest.parse::<usize>().ok()?),
@@ -994,7 +1047,8 @@ mod tests {
         let mut profile = ProfileDocument::new("test");
         let packet = single_obs_packet("identity.core", json!("curious"));
 
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, "test.bridge.json");
+        let (proposed, deltas, _extra) =
+            ingest_bridge_packet(&mut profile, &packet, "test.bridge.json");
 
         assert_eq!(proposed, 1);
         assert_eq!(deltas, 0);
@@ -1011,7 +1065,7 @@ mod tests {
         let mut profile = ProfileDocument::new("test");
         let packet = single_obs_packet("working.mode", json!("sketch-first"));
 
-        let (proposed, _) = ingest_bridge_packet(&mut profile, &packet, "");
+        let (proposed, _deltas, _extra) = ingest_bridge_packet(&mut profile, &packet, "");
         assert_eq!(proposed, 1);
 
         let obs = &profile.working.mode.observations[0];
@@ -1020,42 +1074,126 @@ mod tests {
 
     #[test]
     fn delta_detected_on_conflict() {
-        // Delta detection requires a SINGLETON field — one that route_field returns
-        // by mutable reference rather than creating a new slot. "working.mode" is a
-        // singleton: both packets land in the same ObservationField, so the second
-        // can see the confirmed first and detect the conflict.
-        //
-        // List fields (identity.core, values, domains, signals.*) always create a
-        // new slot per observation — they represent independent items, not alternative
-        // values for the same trait, so they can never conflict.
         let mut profile = ProfileDocument::new("test");
 
-        // First packet: "sketch-first" proposed, then manually confirm it.
         let p1 = single_obs_packet("working.mode", json!("sketch-first"));
         ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
         profile.working.mode.observations[0].status = ObservationStatus::Confirmed;
 
-        // Second packet: "spec-first" — conflicts with confirmed "sketch-first".
         let p2 = single_obs_packet("working.mode", json!("spec-first"));
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &p2, "p2.bridge.json");
+        let (proposed, deltas, _extra) = ingest_bridge_packet(&mut profile, &p2, "p2.bridge.json");
 
         assert_eq!(proposed, 0);
         assert_eq!(deltas, 1);
         assert_eq!(profile.delta_queue.len(), 1);
 
-        // Both observations are now in delta status.
         let obs = &profile.working.mode.observations;
         assert!(obs.iter().all(|o| o.status == ObservationStatus::Delta));
     }
 
     #[test]
-    fn unknown_path_is_skipped() {
+    fn unknown_path_lands_in_extra() {
         let mut profile = ProfileDocument::new("test");
-        let packet = single_obs_packet("nonexistent.path", json!("value"));
+        let packet = single_obs_packet("moment", json!("quiet surprise at being understood"));
 
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, "");
-        assert_eq!(proposed, 0);
+        let (proposed, deltas, extra_keys) = ingest_bridge_packet(&mut profile, &packet, "");
+
+        assert_eq!(proposed, 1);
         assert_eq!(deltas, 0);
+        assert_eq!(extra_keys, vec!["moment"]);
+        assert!(profile.extra.contains_key("moment"));
+        assert_eq!(profile.extra["moment"].len(), 1);
+
+        let obs = &profile.extra["moment"][0].observations[0];
+        assert_eq!(obs.status, ObservationStatus::Proposed);
+    }
+
+    #[test]
+    fn extra_bucket_dedup() {
+        let mut profile = ProfileDocument::new("test");
+
+        // Send the same observation twice.
+        let p1 = single_obs_packet("pattern", json!("thinks in systems"));
+        let (proposed, _, extra1) = ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
+        assert_eq!(proposed, 1);
+        assert_eq!(extra1, vec!["pattern"]);
+
+        let p2 = single_obs_packet("pattern", json!("thinks in systems"));
+        let (proposed2, _, extra2) = ingest_bridge_packet(&mut profile, &p2, "p2.bridge.json");
+        assert_eq!(proposed2, 1);
+        assert_eq!(extra2, vec!["pattern"]);
+
+        // Still one slot, proposal_count incremented (starts at 0, +1 per dedup).
+        assert_eq!(profile.extra["pattern"].len(), 1);
+        assert_eq!(profile.extra["pattern"][0].proposal_count, 1);
+    }
+
+    #[test]
+    fn extra_paths_with_dots_and_hyphens_resolve_from_status_path() {
+        let mut profile = ProfileDocument::new("test");
+        let packet = single_obs_packet("pattern.bench-frame", json!("a stable pattern"));
+        ingest_bridge_packet(&mut profile, &packet, "test.bridge.json");
+
+        let field = resolve_field_mut(&mut profile, "extra.pattern.bench-frame.0")
+            .expect("extra key with dots and hyphens should resolve");
+        field.observations[0].status = ObservationStatus::Confirmed;
+
+        assert_eq!(
+            profile.extra["pattern.bench-frame"][0].observations[0].status,
+            ObservationStatus::Confirmed
+        );
+    }
+
+    #[test]
+    fn bulk_mutations_include_extra_fields_for_both_prefix_forms() {
+        let mut profile = ProfileDocument::new("test");
+        ingest_bridge_packet(
+            &mut profile,
+            &single_obs_packet("moment", json!("noticed a shift")),
+            "moment.bridge.json",
+        );
+        ingest_bridge_packet(
+            &mut profile,
+            &single_obs_packet("pattern.bench-frame", json!("keeps a durable frame")),
+            "pattern.bridge.json",
+        );
+
+        let confirmed = confirm_all_proposed(&mut profile, "extra");
+        assert_eq!(confirmed.len(), 2);
+        assert!(profile
+            .extra
+            .values()
+            .flatten()
+            .flat_map(|field| &field.observations)
+            .all(|obs| obs.status == ObservationStatus::Confirmed));
+
+        ingest_bridge_packet(
+            &mut profile,
+            &single_obs_packet("signals.openings", json!("starts from the edge")),
+            "openings.bridge.json",
+        );
+
+        let rejected = reject_all_proposed(&mut profile, "extra.");
+        assert_eq!(rejected, vec!["extra.signals.openings.0"]);
+        assert_eq!(
+            profile.extra["signals.openings"][0].observations[0].status,
+            ObservationStatus::Rejected
+        );
+    }
+
+    #[test]
+    fn old_profile_without_extra_loads() {
+        // Simulate an old profile JSON that lacks the "extra" key.
+        let json = serde_json::json!({
+            "meta": {
+                "id": "old_user",
+                "version": "0.1.0",
+                "schema_version": "0.1.0"
+            }
+        });
+        let profile: ProfileDocument = serde_json::from_value(json).unwrap();
+        assert_eq!(profile.meta.id, "old_user");
+        assert!(profile.extra.is_empty());
     }
 
     #[test]
@@ -1075,11 +1213,6 @@ mod tests {
 
     #[test]
     fn corroboration_bonus_applied() {
-        // Corroboration requires two observations with the SAME VALUE from DIFFERENT
-        // orientations in the SAME ObservationField. We use "identity.reasoning.style"
-        // — a singleton field — so both packets land in the same field. List paths
-        // (values, domains, etc.) create a new slot per packet, so their observations
-        // end up in separate fields and can't corroborate each other.
         let mut profile = ProfileDocument::new("test");
 
         let make_packet = |orientation: &str, session: &str| BridgePacket {
@@ -1107,7 +1240,6 @@ mod tests {
             "s2.bridge.json",
         );
 
-        // Manually confirm both (simulating user review pass).
         for obs in &mut profile.identity.reasoning.style.observations {
             obs.status = ObservationStatus::Confirmed;
         }
@@ -1115,7 +1247,6 @@ mod tests {
         let boosted = run_corroboration(&mut profile);
         assert_eq!(boosted, 2);
 
-        // Each should have gained +0.08 on top of its base 0.61.
         for obs in &profile.identity.reasoning.style.observations {
             assert!((obs.confidence - (0.61 + CORROBORATION_BONUS)).abs() < 1e-9);
         }
@@ -1141,7 +1272,7 @@ pub fn ingest_and_reinforce(
     usize,
     crate::models::reinforcement::ReinforcementResult,
 ) {
-    let (proposed, deltas) = ingest_bridge_packet(profile, packet, filename);
+    let (proposed, deltas, _extra_keys) = ingest_bridge_packet(profile, packet, filename);
     let r = crate::models::reinforcement::reinforce_after_ingest(profile, None, filename);
     (proposed, deltas, r)
 }

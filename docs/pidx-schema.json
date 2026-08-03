@@ -34,6 +34,34 @@
       ],
       "type": "object"
     },
+    "ArchivedField": {
+      "description": "A dead field's observations, preserved after compaction for the audit trail.\n\nCompaction (LSM-style: tombstone accumulation, amortized reclaim) removes fields whose observations are ALL archived/rejected from the live lists and moves them here. `path` is the dot-path prefix (e.g. `signals.phrases`) and `index` is the original slot it occupied before compaction, so the record of where the observation lived survives. The archive is itself never compacted — rejected/archived observations are permanent record.",
+      "properties": {
+        "index": {
+          "description": "Original slot index before compaction.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "observations": {
+          "description": "The field's observations, exactly as they were when archived.",
+          "items": {
+            "$ref": "#/definitions/Observation"
+          },
+          "type": "array"
+        },
+        "path": {
+          "description": "Dot-path prefix of the list the field lived in (e.g. `signals.phrases`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "observations",
+        "path"
+      ],
+      "type": "object"
+    },
     "BridgeLog": {
       "properties": {
         "pending_filenames": {
@@ -605,7 +633,7 @@
           "type": "number"
         },
         "schema_version": {
-          "default": "0.2.0",
+          "default": "0.3.0",
           "type": "string"
         },
         "ties": {
@@ -621,7 +649,7 @@
           "type": "string"
         },
         "version": {
-          "default": "0.2.0",
+          "default": "0.3.0",
           "type": "string"
         }
       },
@@ -891,6 +919,14 @@
       },
       "type": "array"
     },
+    "archive": {
+      "default": [],
+      "description": "Tombstone graveyard — dead fields moved here by compaction. Never compacted itself: archived/rejected observations are permanent record. `#[serde(default)]` keeps old profiles loading without migration.",
+      "items": {
+        "$ref": "#/definitions/ArchivedField"
+      },
+      "type": "array"
+    },
     "bridge_log": {
       "allOf": [
         {
@@ -943,6 +979,17 @@
         "$ref": "#/definitions/ObservationField"
       },
       "type": "array"
+    },
+    "extra": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/definitions/ObservationField"
+        },
+        "type": "array"
+      },
+      "default": {},
+      "description": "Catch-all bucket for observations whose dot-path field has no dedicated slot. Keyed by the raw bridge-packet field name (e.g. \"moment\", \"relational\", \"pattern\"). Lossless holding pen — promote a key to a first-class field when it earns one. `#[serde(default)]` keeps old profiles loading without migration.",
+      "type": "object"
     },
     "identity": {
       "allOf": [

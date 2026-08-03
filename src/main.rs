@@ -12,7 +12,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use tracing::error;
 
+use crate::ingestion::resolve_field_mut;
 use models::bridge::BridgePacket;
+use models::compaction::compact_profile;
 use models::decay::FieldClass;
 use models::observation::{ObservationField, ObservationStatus, ObservationValue};
 use models::profile::{Annotation, DeltaItem, ProfileDocument, ProfileMeta, ReviewItem};
@@ -58,6 +60,8 @@ struct ActionResult {
     observations_proposed: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     overall_confidence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra_fields: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -81,6 +85,7 @@ impl ActionResult {
             new_status: None,
             observations_proposed: None,
             overall_confidence: None,
+            extra_fields: None,
         }
     }
 }
@@ -216,6 +221,11 @@ enum Command {
 
     /// Print a summary of all observations and their statuses
     Status { user_id: String },
+
+    /// Compact the profile: move dead fields (all observations archived or
+    /// rejected) into the archive, keeping live lists dense. The audit trail
+    /// survives — archived observations are permanent record.
+    Compact { user_id: String },
 
     /// Flip a proposed observation to confirmed
     ///
@@ -478,47 +488,13 @@ fn all_fields(profile: &ProfileDocument) -> Vec<(String, &ObservationField)> {
     v.push(("working.pace".into(), &profile.working.pace));
     v.push(("working.feedback".into(), &profile.working.feedback));
     v.push(("working.pattern".into(), &profile.working.pattern));
-    v
-}
-
-fn resolve_field_mut<'a>(
-    profile: &'a mut ProfileDocument,
-    path: &str,
-) -> Option<&'a mut ObservationField> {
-    let parts: Vec<&str> = path.splitn(3, '.').collect();
-    match parts.as_slice() {
-        ["identity", "core", rest] => {
-            let idx: usize = rest.parse().ok()?;
-            profile.identity.core.get_mut(idx)
+    // Extra bucket
+    for (key, fields) in &profile.extra {
+        for (i, f) in fields.iter().enumerate() {
+            v.push((format!("extra.{key}.{i}"), f));
         }
-        ["identity", "reasoning", name] => match *name {
-            "style" => Some(&mut profile.identity.reasoning.style),
-            "pattern" => Some(&mut profile.identity.reasoning.pattern),
-            "intake" => Some(&mut profile.identity.reasoning.intake),
-            "stance" => Some(&mut profile.identity.reasoning.stance),
-            _ => None,
-        },
-        ["domains", idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
-        ["values", idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
-        ["signals", cat, idx] => {
-            let idx: usize = idx.parse().ok()?;
-            match *cat {
-                "phrases" => profile.signals.phrases.get_mut(idx),
-                "avoidances" => profile.signals.avoidances.get_mut(idx),
-                "rhythms" => profile.signals.rhythms.get_mut(idx),
-                "framings" => profile.signals.framings.get_mut(idx),
-                _ => None,
-            }
-        }
-        ["working", name] => match *name {
-            "mode" => Some(&mut profile.working.mode),
-            "pace" => Some(&mut profile.working.pace),
-            "feedback" => Some(&mut profile.working.feedback),
-            "pattern" => Some(&mut profile.working.pattern),
-            _ => None,
-        },
-        _ => None,
     }
+    v
 }
 
 /// Short display string for any ObservationValue.
@@ -883,7 +859,7 @@ fn cmd_status(user_id: &str, format: Format) -> Result<()> {
         let mut total_delta = 0usize;
 
         for (path, field) in all_fields(&profile) {
-            if field.observations.is_empty() {
+            if !field.has_live() {
                 continue;
             }
             let mut c = 0;
@@ -966,7 +942,7 @@ fn cmd_status(user_id: &str, format: Format) -> Result<()> {
     card_lines.push(String::from("\x1b[1m### FIELD SUMMARIES\x1b[0m"));
 
     for (path, field) in all_fields(&profile) {
-        if field.observations.is_empty() {
+        if !field.has_live() {
             continue;
         }
         let mut c = 0;
@@ -1107,6 +1083,7 @@ fn cmd_flip_status(
                 new_status: Some(verb.to_string()),
                 observations_proposed: None,
                 overall_confidence: None,
+                extra_fields: None,
             })?
         );
     } else {
@@ -1196,6 +1173,27 @@ fn cmd_reject_all(user_id: &str, field_prefix: &str, format: Format) -> Result<(
         for f in &result.fields {
             eprintln!("  {f}");
         }
+    }
+    Ok(())
+}
+
+fn cmd_compact(user_id: &str, format: Format) -> Result<()> {
+    let store = ProfileStore::new(ProfileStore::default_dir());
+    let mut profile = store.load_or_create(user_id)?;
+    let report = compact_profile(&mut profile);
+    profile.meta.bump_version();
+    store.save(&mut profile)?;
+
+    if format.is_machine() {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Compacted {} list(s): {} dead field(s) archived ({} observations), archive total {}",
+            report.lists_compacted,
+            report.fields_archived,
+            report.observations_archived,
+            report.archive_total
+        );
     }
     Ok(())
 }
@@ -1366,24 +1364,23 @@ fn cmd_ingest(user_id: &str, packet_path: &std::path::Path, format: Format) -> R
     let packet: BridgePacket =
         serde_json::from_str(&raw).map_err(|e| anyhow::anyhow!("invalid bridge packet: {e}"))?;
 
-    // Timestamp validation
-    if chrono::DateTime::parse_from_rfc3339(&packet.timestamp).is_err()
-        && chrono::DateTime::parse_from_rfc2822(&packet.timestamp).is_err()
+    // Timestamp validation — v0.2 packets carry it in the nested `source` object.
+    let ts = packet.effective_timestamp();
+    if chrono::DateTime::parse_from_rfc3339(ts).is_err()
+        && chrono::DateTime::parse_from_rfc2822(ts).is_err()
     {
-        anyhow::bail!(
-            "invalid bridge packet: invalid timestamp '{}'",
-            packet.timestamp
-        );
+        anyhow::bail!("invalid bridge packet: invalid timestamp '{ts}'");
     }
 
-    let n_obs = packet.observations.len();
+    let _n_obs = packet.observations.len();
     let session = packet.session_ref.clone();
     let filename = packet_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown.bridge.json");
 
-    ingestion::ingest_bridge_packet(&mut profile, &packet, filename);
+    let (proposed, _deltas, extra_keys) =
+        ingestion::ingest_bridge_packet(&mut profile, &packet, filename);
     store.save(&mut profile)?;
 
     if format.is_machine() {
@@ -1396,12 +1393,24 @@ fn cmd_ingest(user_id: &str, packet_path: &std::path::Path, format: Format) -> R
                 index: None,
                 value: None,
                 new_status: None,
-                observations_proposed: Some(n_obs),
+                observations_proposed: Some(proposed),
                 overall_confidence: Some(profile.meta.overall_confidence),
+                extra_fields: if extra_keys.is_empty() {
+                    None
+                } else {
+                    Some(extra_keys.clone())
+                },
             })?
         );
     } else {
-        eprintln!("Ingested {n_obs} observations from session '{session}' into '{user_id}'.");
+        eprintln!("Ingested {proposed} observations from session '{session}' into '{user_id}'.");
+        if !extra_keys.is_empty() {
+            eprintln!(
+                "  note: {} observation(s) routed to extra bucket: {}",
+                extra_keys.len(),
+                extra_keys.join(", ")
+            );
+        }
         eprintln!("Saved. Run `pidx status {user_id}` to review proposed observations.");
     }
     Ok(())
@@ -2081,17 +2090,23 @@ fn cmd_watch(user_id: &str, dir: Option<std::path::PathBuf>, format: Format) -> 
                 }
             };
 
-            // Timestamp validation
-            if chrono::DateTime::parse_from_rfc3339(&packet.timestamp).is_err()
-                && chrono::DateTime::parse_from_rfc2822(&packet.timestamp).is_err()
+            // Timestamp validation — v0.2 packets carry it in the nested `source` object.
+            let ts = packet.effective_timestamp();
+            if chrono::DateTime::parse_from_rfc3339(ts).is_err()
+                && chrono::DateTime::parse_from_rfc2822(ts).is_err()
             {
-                eprintln!("  skip {name}: invalid timestamp '{}'", packet.timestamp);
+                eprintln!("  skip {name}: invalid timestamp '{ts}'");
                 continue;
             }
 
+            // Route by the packet's target_profile when present; fall back to
+            // the CLI-provided user_id so `pidx watch <user>` keeps its old behavior.
+            let effective_user = packet.target_profile.as_deref().unwrap_or(user_id);
+
             let store = ProfileStore::new(ProfileStore::default_dir());
-            let mut profile = store.load_or_create(user_id)?;
-            let (proposed, deltas) = ingestion::ingest_bridge_packet(&mut profile, &packet, name);
+            let mut profile = store.load_or_create(effective_user)?;
+            let (proposed, deltas, extra_keys) =
+                ingestion::ingest_bridge_packet(&mut profile, &packet, name);
             store.save(&mut profile)?;
 
             // Move to .processed/ — if rename fails (e.g. cross-device), delete instead.
@@ -2109,6 +2124,7 @@ fn cmd_watch(user_id: &str, dir: Option<std::path::PathBuf>, format: Format) -> 
                         "observations_proposed": proposed,
                         "deltas_flagged": deltas,
                         "overall_confidence": profile.meta.overall_confidence,
+                        "extra_fields": if extra_keys.is_empty() { serde_json::json!([]) } else { serde_json::json!(extra_keys) },
                     }))?
                 );
             } else {
@@ -2116,6 +2132,9 @@ fn cmd_watch(user_id: &str, dir: Option<std::path::PathBuf>, format: Format) -> 
                     "  [{}] proposed:{proposed}  deltas:{deltas}  conf:{:.2}",
                     name, profile.meta.overall_confidence,
                 );
+                if !extra_keys.is_empty() {
+                    eprintln!("         extra: {}", extra_keys.join(", "));
+                }
             }
         }
     }
@@ -2388,6 +2407,7 @@ fn main() {
     let result = match cli.command {
         Command::Show { user_id, tier, md } => cmd_show(&user_id, tier, md, fmt),
         Command::Status { user_id } => cmd_status(&user_id, fmt),
+        Command::Compact { user_id } => cmd_compact(&user_id, fmt),
         Command::Confirm {
             user_id,
             field,

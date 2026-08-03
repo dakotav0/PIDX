@@ -36,9 +36,10 @@ pub mod traits;
 
 pub use ingestion::{
     confirm_all_proposed, ingest_and_reinforce, ingest_bridge_packet, reject_all_proposed,
-    run_corroboration, run_decay_pass,
+    resolve_field_mut, run_corroboration, run_decay_pass,
 };
 pub use models::calibration::{derive_and_store_calibration, derive_calibration, CalibrationSeed};
+pub use models::compaction::{compact_profile, CompactReport};
 pub use models::pidx_type::PidxType;
 pub use models::profile::ProfileDocument;
 pub use models::reinforcement::{reinforce_after_ingest, ReinforcementConfig, ReinforcementResult};

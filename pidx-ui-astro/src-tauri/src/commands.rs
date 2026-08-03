@@ -30,7 +30,7 @@ use pidx::models::profile::ProfileDocument;
 use pidx::output::Tier;
 use pidx::{
     confirm_all_proposed, ingest_bridge_packet, reject_all_proposed, render_tier_output,
-    run_corroboration, run_decay_pass, ProfileStore,
+    resolve_field_mut, run_corroboration, run_decay_pass, ProfileStore,
 };
 
 // ── Shared app state ─────────────────────────────────────────────────────────
@@ -240,7 +240,7 @@ pub async fn get_status(
         ];
 
         for (path, field) in field_iter {
-            if field.observations.is_empty() {
+            if !field.has_live() {
                 continue;
             }
             let c = field
@@ -267,7 +267,7 @@ pub async fn get_status(
         macro_rules! push_list {
             ($list:expr, $prefix:expr) => {
                 for (i, f) in $list.iter().enumerate() {
-                    if f.observations.is_empty() { continue; }
+                    if !f.has_live() { continue; }
                     let c = f.observations.iter().filter(|o| o.status == ObservationStatus::Confirmed).count();
                     let p = f.observations.iter().filter(|o| o.status == ObservationStatus::Proposed).count();
                     let d = f.observations.iter().filter(|o| o.status == ObservationStatus::Delta).count();
@@ -381,15 +381,18 @@ pub async fn ingest_packet(
         .store
         .load_or_create(&user_id)
         .map_err(|e| e.to_string())?;
-    let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, filename);
+    let (proposed, deltas, extra_fields) = ingest_bridge_packet(&mut profile, &packet, filename);
     run_corroboration(&mut profile);
     state.store.save(&mut profile).map_err(|e| e.to_string())?;
     invalidate(&state, &user_id).await;
 
     info!(user_id, proposed, deltas, "ingest_packet");
-    Ok(
-        serde_json::json!({ "ok": true, "observations_proposed": proposed, "deltas_flagged": deltas }),
-    )
+    Ok(serde_json::json!({
+        "ok": true,
+        "observations_proposed": proposed,
+        "deltas_flagged": deltas,
+        "extra_fields": extra_fields,
+    }))
 }
 
 /// Resolve a delta conflict — keep one side, reject the other.
@@ -610,46 +613,4 @@ fn find_obs_mut<'a>(
         .observations
         .get_mut(index)
         .ok_or_else(|| format!("index {index} out of range (field has {len} observations)"))
-}
-
-/// Resolve a dot-path to a mutable `ObservationField`.
-/// Duplicates the CLI helper — will be unified when shared logic moves to pidx::lib.
-fn resolve_field_mut<'a>(
-    profile: &'a mut ProfileDocument,
-    path: &str,
-) -> Option<&'a mut pidx::models::observation::ObservationField> {
-    let parts: Vec<&str> = path.splitn(3, '.').collect();
-    match parts.as_slice() {
-        ["identity", "core", rest] => {
-            let idx: usize = rest.parse().ok()?;
-            profile.identity.core.get_mut(idx)
-        }
-        ["identity", "reasoning", name] => match *name {
-            "style" => Some(&mut profile.identity.reasoning.style),
-            "pattern" => Some(&mut profile.identity.reasoning.pattern),
-            "intake" => Some(&mut profile.identity.reasoning.intake),
-            "stance" => Some(&mut profile.identity.reasoning.stance),
-            _ => None,
-        },
-        ["domains", idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
-        ["values", idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
-        ["signals", cat, idx] => {
-            let idx: usize = idx.parse().ok()?;
-            match *cat {
-                "phrases" => profile.signals.phrases.get_mut(idx),
-                "avoidances" => profile.signals.avoidances.get_mut(idx),
-                "rhythms" => profile.signals.rhythms.get_mut(idx),
-                "framings" => profile.signals.framings.get_mut(idx),
-                _ => None,
-            }
-        }
-        ["working", name] => match *name {
-            "mode" => Some(&mut profile.working.mode),
-            "pace" => Some(&mut profile.working.pace),
-            "feedback" => Some(&mut profile.working.feedback),
-            "pattern" => Some(&mut profile.working.pattern),
-            _ => None,
-        },
-        _ => None,
-    }
 }

@@ -218,6 +218,35 @@ impl ObservationField {
             .any(|o| o.status == ObservationStatus::Delta)
     }
 
+    /// True when at least one observation is live (confirmed, proposed, or
+    /// delta). Fields whose observations are ALL archived or rejected are
+    /// dead weight: invisible to status/display and eligible for compaction.
+    pub fn has_live(&self) -> bool {
+        self.observations.iter().any(|o| {
+            matches!(
+                o.status,
+                ObservationStatus::Confirmed
+                    | ObservationStatus::Proposed
+                    | ObservationStatus::Delta
+            )
+        })
+    }
+
+    /// Number of live observations in this field.
+    pub fn live_count(&self) -> usize {
+        self.observations
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o.status,
+                    ObservationStatus::Confirmed
+                        | ObservationStatus::Proposed
+                        | ObservationStatus::Delta
+                )
+            })
+            .count()
+    }
+
     /// The maximum base confidence among confirmed observations in this field.
     /// Returns 0.0 if there are no confirmed observations.
     pub fn overall_confidence(&self) -> f64 {
@@ -243,6 +272,36 @@ impl ObservationField {
             Some([deltas[0], deltas[1]])
         } else {
             None
+        }
+    }
+}
+
+// ── ArchivedField ────────────────────────────────────────────────────────────
+
+/// A dead field's observations, preserved after compaction for the audit trail.
+///
+/// Compaction (LSM-style: tombstone accumulation, amortized reclaim) removes
+/// fields whose observations are ALL archived/rejected from the live lists and
+/// moves them here. `path` is the dot-path prefix (e.g. `signals.phrases`) and
+/// `index` is the original slot it occupied before compaction, so the record
+/// of where the observation lived survives. The archive is itself never
+/// compacted — rejected/archived observations are permanent record.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ArchivedField {
+    /// Dot-path prefix of the list the field lived in (e.g. `signals.phrases`).
+    pub path: String,
+    /// Original slot index before compaction.
+    pub index: usize,
+    /// The field's observations, exactly as they were when archived.
+    pub observations: Vec<Observation>,
+}
+
+impl ArchivedField {
+    pub fn new(path: impl Into<String>, index: usize, field: &ObservationField) -> Self {
+        Self {
+            path: path.into(),
+            index,
+            observations: field.observations.clone(),
         }
     }
 }

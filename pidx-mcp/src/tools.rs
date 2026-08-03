@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 use pidx::{
     confirm_all_proposed, ingest_bridge_packet, reject_all_proposed, render_tier_output,
-    run_corroboration, run_decay_pass, ProfileStore,
+    resolve_field_mut, run_corroboration, run_decay_pass, ProfileStore,
 };
 
 // ── Tool input structs ────────────────────────────────────────────────────────
@@ -64,6 +64,18 @@ pub struct PidxShowTool {
 )]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PidxStatusTool {
+    /// User ID
+    pub user_id: String,
+}
+
+/// Compact the profile: move dead fields (all observations archived or
+/// rejected) into the archive, keeping live lists dense. Audit trail survives.
+#[macros::mcp_tool(
+    name = "pidx_compact",
+    description = "Compact a PIDX profile: move dead fields (observations all archived or rejected) into the profile archive so live lists stay dense. Returns counts of archived fields and observations. The audit trail is preserved — archived observations are permanent record."
+)]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PidxCompactTool {
     /// User ID
     pub user_id: String,
 }
@@ -285,6 +297,7 @@ tool_box!(
         PidxListTool,
         PidxShowTool,
         PidxStatusTool,
+        PidxCompactTool,
         PidxIngestTool,
         PidxMailboxScanTool,
         PidxConfirmTool,
@@ -348,6 +361,7 @@ impl ServerHandler for PidxHandler {
             PidxTools::PidxListTool(_) => self.handle_list().await,
             PidxTools::PidxShowTool(t) => self.handle_show(t).await,
             PidxTools::PidxStatusTool(t) => self.handle_status(t).await,
+            PidxTools::PidxCompactTool(t) => self.handle_compact(t).await,
             PidxTools::PidxIngestTool(t) => self.handle_ingest(t).await,
             PidxTools::PidxMailboxScanTool(t) => self.handle_mailbox_scan(t).await,
             PidxTools::PidxConfirmTool(t) => self.handle_confirm(t).await,
@@ -462,7 +476,7 @@ impl PidxHandler {
         ];
 
         for (path, field) in scalar_fields {
-            if field.observations.is_empty() {
+            if !field.has_live() {
                 continue;
             }
             let c = field
@@ -523,6 +537,34 @@ impl PidxHandler {
             }
         }
 
+        // Extra bucket
+        for (key, fields) in &profile.extra {
+            for (i, f) in fields.iter().enumerate() {
+                if f.observations.is_empty() {
+                    continue;
+                }
+                let c = f
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Confirmed)
+                    .count();
+                let p = f
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Proposed)
+                    .count();
+                let d = f
+                    .observations
+                    .iter()
+                    .filter(|o| o.status == ObservationStatus::Delta)
+                    .count();
+                summaries.push(serde_json::json!({
+                    "path": format!("extra.{key}.{i}"),
+                    "confirmed": c, "proposed": p, "delta": d
+                }));
+            }
+        }
+
         info!(user_id = %t.user_id, "pidx_status");
         json_text(&serde_json::json!({
             "user_id": t.user_id,
@@ -532,6 +574,24 @@ impl PidxHandler {
             "fields": summaries,
             "delta_queue_open": profile.delta_queue.iter().filter(|d| !d.resolved).count(),
             "review_queue_pending": profile.review_queue.iter().filter(|r| !r.resolved).count(),
+        }))
+    }
+
+    async fn handle_compact(&self, t: PidxCompactTool) -> ToolResult {
+        use pidx::models::compaction::compact_profile;
+
+        let mut profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
+        let report = compact_profile(&mut profile);
+        profile.meta.bump_version();
+        self.store.save(&mut profile).map_err(tool_err)?;
+
+        info!(user_id = %t.user_id, fields_archived = report.fields_archived, "pidx_compact");
+        json_text(&serde_json::json!({
+            "user_id": t.user_id,
+            "lists_compacted": report.lists_compacted,
+            "fields_archived": report.fields_archived,
+            "observations_archived": report.observations_archived,
+            "archive_total": report.archive_total,
         }))
     }
 
@@ -557,16 +617,17 @@ impl PidxHandler {
             .unwrap_or("unknown.bridge.json");
 
         let mut profile = self.store.load_or_create(&user_id).map_err(tool_err)?;
-        let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, filename);
+        let (proposed, deltas, extra_keys) = ingest_bridge_packet(&mut profile, &packet, filename);
         run_corroboration(&mut profile);
         self.store.save(&mut profile).map_err(tool_err)?;
 
-        info!(user_id = %user_id, proposed, deltas, "pidx_ingest");
+        info!(user_id = %user_id, proposed, deltas, ?extra_keys, "pidx_ingest");
         json_text(&serde_json::json!({
             "ok": true,
             "user_id": user_id,
             "observations_proposed": proposed,
             "deltas_flagged": deltas,
+            "extra_fields": extra_keys,
         }))
     }
 
@@ -1114,7 +1175,8 @@ impl PidxHandler {
                 }
             };
 
-            let (proposed, deltas) = ingest_bridge_packet(&mut profile, &packet, &filename);
+            let (proposed, deltas, extra_keys) =
+                ingest_bridge_packet(&mut profile, &packet, &filename);
             run_corroboration(&mut profile);
 
             if let Err(e) = self.store.save(&mut profile) {
@@ -1125,13 +1187,14 @@ impl PidxHandler {
             let dest = processed_dir.join(&filename);
             let move_warn = std::fs::rename(bfile, &dest).err().map(|e| e.to_string());
 
-            info!(user_id = %user_id, file = %filename, proposed, deltas, "pidx_mailbox_scan");
+            info!(user_id = %user_id, file = %filename, proposed, deltas, ?extra_keys, "pidx_mailbox_scan");
             let mut entry = serde_json::json!({
                 "file": filename,
                 "ok": true,
                 "user_id": user_id,
                 "proposed": proposed,
                 "deltas": deltas,
+                "extra_fields": extra_keys,
             });
             if let Some(w) = move_warn {
                 entry["warning"] = serde_json::json!(format!("ingested but move failed: {w}"));
@@ -1161,46 +1224,6 @@ fn resolve_obs_mut<'a>(
         .observations
         .get_mut(index)
         .ok_or_else(|| format!("index {index} out of range (field has {len} observations)"))
-}
-
-fn resolve_field_mut<'a>(
-    profile: &'a mut pidx::ProfileDocument,
-    path: &str,
-) -> Option<&'a mut pidx::models::observation::ObservationField> {
-    let parts: Vec<&str> = path.splitn(3, '.').collect();
-    match parts.as_slice() {
-        ["identity", "core", rest] => {
-            let idx: usize = rest.parse().ok()?;
-            profile.identity.core.get_mut(idx)
-        }
-        ["identity", "reasoning", name] => match *name {
-            "style" => Some(&mut profile.identity.reasoning.style),
-            "pattern" => Some(&mut profile.identity.reasoning.pattern),
-            "intake" => Some(&mut profile.identity.reasoning.intake),
-            "stance" => Some(&mut profile.identity.reasoning.stance),
-            _ => None,
-        },
-        ["domains", idx] => profile.domains.get_mut(idx.parse::<usize>().ok()?),
-        ["values", idx] => profile.values.get_mut(idx.parse::<usize>().ok()?),
-        ["signals", cat, idx] => {
-            let idx: usize = idx.parse().ok()?;
-            match *cat {
-                "phrases" => profile.signals.phrases.get_mut(idx),
-                "avoidances" => profile.signals.avoidances.get_mut(idx),
-                "rhythms" => profile.signals.rhythms.get_mut(idx),
-                "framings" => profile.signals.framings.get_mut(idx),
-                _ => None,
-            }
-        }
-        ["working", name] => match *name {
-            "mode" => Some(&mut profile.working.mode),
-            "pace" => Some(&mut profile.working.pace),
-            "feedback" => Some(&mut profile.working.feedback),
-            "pattern" => Some(&mut profile.working.pattern),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 // ── Diff helpers ──────────────────────────────────────────────────────────────

@@ -306,6 +306,21 @@ fn section_annotations(profile: &ProfileDocument) -> Option<String> {
     Some(format!("### ANNOTATIONS (pinned)\n{}", lines.join("\n")))
 }
 
+fn section_extra(profile: &ProfileDocument) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for (key, fields) in &profile.extra {
+        for field in fields {
+            if let Some(text) = active_text(field, FieldClass::Extra) {
+                lines.push(format!("- {key}: {text}"));
+            }
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!("### EXTRA\n{}", lines.join("\n")))
+}
+
 fn section_deltas(profile: &ProfileDocument) -> Option<String> {
     let open: Vec<_> = profile.delta_queue.iter().filter(|d| !d.resolved).collect();
     if open.is_empty() {
@@ -413,6 +428,9 @@ pub fn render_tier_output(profile: &mut ProfileDocument, tier: Tier) -> String {
 
     // ── Rich adds: signals, pinned annotations, delta summary ─────────────
     if let Some(s) = section_signals(profile) {
+        sections.push(s);
+    }
+    if let Some(s) = section_extra(profile) {
         sections.push(s);
     }
     if let Some(s) = section_annotations(profile) {

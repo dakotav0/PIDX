@@ -1,5 +1,5 @@
 # PERSONALITY·IDX — Schema Specification
-**Version:** 0.2.0  
+**Version:** 0.3.0  
 **Status:** Current  
 **Engine:** Claude-piloted. Not designed for local model execution.  
 **Source of truth:** `src/models/*.rs` + `docs/pidx-schema.json` (generated via `cargo run --example emit_schema -- --write`)
