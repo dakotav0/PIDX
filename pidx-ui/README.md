@@ -1,42 +1,44 @@
-# sv
+# PIDX UI
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+The PIDX desktop UI — a **pre-release** build of the personality indexer's front end.
+SvelteKit 5 (runes) + Tailwind 4 + Tauri v2. It reads and writes the same profiles as
+the CLI and MCP server; nothing here is a separate data store.
 
-## Creating a project
+## Prerequisites
 
-If you're seeing this, you've probably already done this step. Congrats!
+- Rust workspace at the repo root (`cargo build` — the UI crate is `pidx-ui-svelte`)
+- Node 22+ (`npm ci` in this directory)
 
-```sh
-# create a new project
-npx sv create my-app
+## Dev
+
+```bash
+npm ci
+# profiles dir defaults to PIDX_PROFILES_DIR, then a walk-up `profiles/` dir,
+# then `./profiles`. Point it at your real store for a live view:
+PIDX_PROFILES_DIR="$HOME/Library/Application Support/pidx/profiles" npm run tauri dev
 ```
 
-To recreate this project with the same configuration:
+## Build
 
-```sh
-# recreate this project
-npx sv@0.15.1 create --template minimal --types ts --add prettier eslint sveltekit-adapter="adapter:static" --no-install pidx-ui
+```bash
+npm run build       # vite production build (also the CI gate)
+npm run tauri build # standalone macOS app bundle
 ```
 
-## Developing
+## Layout
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+```
+src/routes/            / (profile list) · /profile/[user] (Profile · Review · Gardener · Inspector · Debugger) · /bridge · /diff
+src/lib/ipc.ts         typed invoke() wrappers — one function per Tauri command
+src/lib/profile.ts     view helpers (confirmed-observation selectors, register axes)
+src/lib/components/    ProfileView (tiered centerpiece) · ProfileSection · RegisterRadar · ObservationTable · Inspector/Gardener/Debugger views
+src-tauri/src/commands.rs  #[tauri::command] handlers — thin shims over the pidx library
 ```
 
-## Building
+## Notes
 
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+- **Tauri v2 invoke args are camelCase** (`userId`, `fieldPrefix`…) — keep `ipc.ts` in that
+  shape; snake_case keys fail with `command … missing required key …`.
+- Confidence is recomputed at read time everywhere (home list, status, profile) — the
+  stored `meta.overall_confidence` may lag after writes.
+- The profile page defaults to the Profile tab; Debugger is the fallback.

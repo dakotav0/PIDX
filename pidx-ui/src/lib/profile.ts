@@ -70,13 +70,13 @@ export function fieldConfidence(profile: ProfileDocument, path: string): number 
 
 // ── Confirmed-observation helpers (display = confirmed only) ─────────────────
 
-export const REGISTER_METRICS: { key: string; label: string }[] = [
-	{ key: 'formality', label: 'formality' },
-	{ key: 'directness', label: 'directness' },
-	{ key: 'hedging', label: 'hedging' },
-	{ key: 'humor', label: 'humor' },
-	{ key: 'abstraction', label: 'abstraction' },
-	{ key: 'affect', label: 'affect' }
+export const REGISTER_METRICS: { key: string; label: string; short: string }[] = [
+	{ key: 'formality', label: 'formality', short: 'formal' },
+	{ key: 'directness', label: 'directness', short: 'direct' },
+	{ key: 'hedging', label: 'hedging', short: 'hedge' },
+	{ key: 'humor', label: 'humor', short: 'humor' },
+	{ key: 'abstraction', label: 'abstraction', short: 'abstract' },
+	{ key: 'affect', label: 'affect', short: 'affect' }
 ];
 
 export function confirmedObs(field: ProfileField | null | undefined): ObservationRow[] {

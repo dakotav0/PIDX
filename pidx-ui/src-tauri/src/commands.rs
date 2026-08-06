@@ -71,30 +71,22 @@ impl Default for AppState {
 ///
 /// Priority:
 /// 1. `PIDX_PROFILES_DIR` env var — same contract as the CLI
-/// 2. Walk UP from `current_exe()` looking for an existing `profiles/` dir.
-///    In Tauri dev the binary lives at `<workspace>/target/debug/pidx-ui.exe`;
-///    3 hops up reaches the workspace root which has `profiles/` in it.
-///    This makes `cargo tauri dev` work out of the box without any config.
-/// 3. `./profiles` — original CLI fallback (CWD-relative)
+/// 2. Platform data dir — the SAME default as `ProfileStore::default_dir()`
+///    (macOS: `~/Library/Application Support/pidx/profiles`). Bundled apps must
+///    resolve here: there is no exe-relative `profiles/` inside a .app, and a
+///    Finder-launched app's CWD is not meaningful. Prior to 2026-08-06 the UI
+///    only checked env → exe walk-up → `./profiles`, so bundled builds found
+///    nothing.
+/// 3. `./profiles` — last resort when the platform has no data dir.
 fn find_profiles_dir() -> std::path::PathBuf {
     // 1. Env var
     if let Ok(dir) = std::env::var("PIDX_PROFILES_DIR") {
         return std::path::PathBuf::from(dir);
     }
 
-    // 2. Walk up from the binary
-    if let Ok(exe) = std::env::current_exe() {
-        let mut candidate = exe;
-        for _ in 0..6 {
-            candidate = match candidate.parent() {
-                Some(p) => p.to_path_buf(),
-                None => break,
-            };
-            let profiles = candidate.join("profiles");
-            if profiles.is_dir() {
-                return profiles;
-            }
-        }
+    // 2. Platform data dir — same default as CLI/MCP
+    if let Some(dir) = dirs::data_dir() {
+        return dir.join("pidx").join("profiles");
     }
 
     // 3. Fallback
@@ -152,7 +144,8 @@ pub async fn list_users(state: State<'_, AppState>) -> Result<serde_json::Value,
             let Some(user_id) = name.strip_suffix(".pidx.json") else {
                 continue;
             };
-            if let Ok(profile) = load_cached(&state, user_id).await {
+            if let Ok(mut profile) = load_cached(&state, user_id).await {
+                profile.recompute_overall_confidence();
                 users.push(serde_json::json!({
                     "user_id": user_id,
                     "version": profile.meta.version,

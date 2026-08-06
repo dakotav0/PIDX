@@ -2,6 +2,7 @@
 	export interface RadarAxis {
 		path: string;
 		label: string;
+		short?: string;
 		value: number; // 0.0 – 1.0
 	}
 
@@ -15,8 +16,8 @@
 
 	const CX = 150,
 		CY = 150,
-		R = 100,
-		LABEL_R = 125;
+		R = 96,
+		LABEL_R = 112;
 
 	const N = $derived(axes.length);
 
@@ -58,7 +59,7 @@
 	const rings = [0.25, 0.5, 0.75, 1.0];
 </script>
 
-<svg viewBox="0 0 300 300" class="w-full max-w-[260px]" aria-label="Register radar chart">
+<svg viewBox="0 0 300 300" class="w-full max-w-[280px]" aria-label="Register radar chart">
 	<!-- Ring guides -->
 	{#each rings as scale}
 		<polygon
@@ -113,7 +114,7 @@
 			tabindex="0"
 			onclick={() => onSelect?.(axis.path)}
 			onkeydown={(e) => e.key === 'Enter' && onSelect?.(axis.path)}
-		>{axis.label}</text>
+		>{axis.short ?? axis.label}</text>
 
 		<circle
 			cx={dp.x}

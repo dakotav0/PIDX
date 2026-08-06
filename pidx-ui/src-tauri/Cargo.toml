@@ -23,6 +23,7 @@ chrono      = { version = "0.4", features = ["serde"] }
 tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 tracing     = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs        = "5"
 
 # The pidx library — same workspace, zero overhead
 pidx = { path = "../.." }

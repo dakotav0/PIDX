@@ -341,7 +341,7 @@ Only `confirm` entries are acted on automatically. `revise` and `deprecate` are 
 
 ### `BridgeDyadicNotes`
 
-Relational metadata about a specific pairing between two profiles. Stored as a decay-exempt annotation on the target profile — a dedicated `dyadic` document type is deferred to v0.3.
+Relational metadata about a specific pairing between two profiles. Stored as a decay-exempt annotation on the target profile — a dedicated `dyadic` document type is not yet implemented; pairing metadata currently lives as annotations.
 
 ```typescript
 interface BridgeDyadicNotes {

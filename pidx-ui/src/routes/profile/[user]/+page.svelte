@@ -83,7 +83,7 @@
 	});
 </script>
 
-<main class="p-6 max-w-4xl">
+<main class="p-6 w-full">
 	<a href="/" class="text-xs text-text-muted hover:text-accent mb-4 inline-block">← back</a>
 
 	{#if loading}

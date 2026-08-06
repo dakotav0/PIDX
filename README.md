@@ -67,7 +67,7 @@ Add to your MCP client config (e.g. `.vscode/mcp.json`):
 }
 ```
 
-The server exposes 14 tools grouped as read, write, and lifecycle. See [SKILL.md](pidx-mcp/pidx-pilot/SKILL.md) for the agent-facing workflow guide.
+The server exposes 22 tools grouped as read, write, and lifecycle. See [pidx-agent-guide.md](pidx-mcp/pidx-agent-guide.md) for the agent-facing workflow guide.
 
 ## Project layout
 
@@ -76,19 +76,19 @@ pidx/               — core library + CLI binary
   src/
     models/         — profile schema (observation, evidence, decay, profile)
     ingestion.rs    — bridge packet routing + corroboration + decay
-    output.rs       — tier-scaled rendering (T1/T2/T3)
+    output.rs       — tier-scaled rendering (nano/micro/standard/rich)
     storage.rs      — file-per-user JSON persistence
     main.rs         — CLI (clap derive, Human boxed display + TTY detection)
 pidx-mcp/           — stdio MCP server (rust-mcp-sdk)
-pidx-ui/            — Tauri desktop UI (experimental, not in v0)
+pidx-ui/            — Tauri desktop UI (pre-release build — SvelteKit 5 + Tailwind 4)
 docs/               — schema spec + manual
 profiles/           — example profiles (live profiles excluded via .gitignore)
 ```
 
 ## Status
 
-**v0.2** — CLI and MCP server are stable. Schema `v0.2.0`. Cargo.lock committed.
-Tauri UI is experimental and excluded from v0.
+**v0.3** — CLI and MCP server are stable. Schema `v0.3.0`. Cargo.lock committed.
+The Tauri UI is a pre-release build — it works against the same profiles and is under active development.
 
 ## Bundled with mRAG
 

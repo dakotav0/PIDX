@@ -63,6 +63,7 @@
 			return {
 				path: m.key,
 				label: m.label,
+				short: m.short,
 				value: metric ? metric.score / 10 : 0
 			};
 		})
@@ -154,14 +155,14 @@
 			<p class="text-text-muted text-xs mb-2">register…</p>
 		{:else}
 			<RegisterRadar axes={radarAxes} />
-			<p class="text-xs text-text-muted text-center mt-1">register — live scores</p>
+			<p class="text-xs text-text-muted text-center mt-1">register · recomputed at read</p>
 		{/if}
 
 		{#if show.micro && registerRows.length > 0}
 			<ul class="mt-4 space-y-1.5">
 				{#each registerRows as row}
 					<li class="flex items-center gap-2 text-xs">
-						<span class="text-text-muted w-20 shrink-0 font-mono">{row.key}</span>
+						<span class="text-text-muted w-24 shrink-0 font-mono">{row.key}</span>
 						<div class="h-1 rounded-full bg-surface-3 flex-1 overflow-hidden">
 							{#if row.confidence != null}
 								<div
@@ -178,7 +179,7 @@
 	</div>
 
 	<!-- Tiered sections -->
-	<div class="flex-1 min-w-0 space-y-4">
+	<div class="flex-1 min-w-0 grid gap-4 md:grid-cols-2 2xl:grid-cols-3 items-start">
 		{#if show.nano}
 			<ProfileSection
 				title="Identity core"

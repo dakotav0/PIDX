@@ -16,7 +16,7 @@
 	let reviewIdx = $state(0);
 	let deltaIdx = $state(0);
 	let busy = $state(false);
-	let decayResult = $state<{ flagged: number } | null>(null);
+	let decayResult = $state<{ flagged: number; pending: number } | null>(null);
 
 	const openReviews = $derived(profile.review_queue.filter((r) => !r.resolved));
 	const openDeltas = $derived(profile.delta_queue.filter((d) => !d.resolved));
@@ -70,7 +70,7 @@
 		decayResult = null;
 		try {
 			const res = await runDecay(userId);
-			decayResult = { flagged: res.newly_flagged };
+			decayResult = { flagged: res.newly_flagged, pending: res.review_queue_pending };
 			onUpdate();
 		} finally {
 			busy = false;
@@ -121,7 +121,9 @@
 			<p class="text-xs text-text-muted mt-2">
 				{decayResult.flagged > 0
 					? `↓ ${decayResult.flagged} observation${decayResult.flagged === 1 ? '' : 's'} flagged for review`
-					: '✓ Nothing flagged'}
+					: decayResult.pending > 0
+						? `no new flags — ${decayResult.pending} still pending review`
+						: '✓ Nothing flagged'}
 			</p>
 		{/if}
 	</div>
@@ -343,7 +345,9 @@
 			<span class="text-xs text-text-muted">
 				{decayResult.flagged > 0
 					? `↓ ${decayResult.flagged} flagged for review`
-					: '✓ nothing flagged'}
+					: decayResult.pending > 0
+						? `no new flags — ${decayResult.pending} still pending review`
+						: '✓ nothing flagged'}
 			</span>
 		{/if}
 	</div>
