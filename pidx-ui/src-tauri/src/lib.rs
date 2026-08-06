@@ -19,6 +19,8 @@ pub fn run() {
             commands::get_profile,
             commands::get_show,
             commands::get_status,
+            commands::list_observations,
+            commands::get_observation,
             commands::confirm_observation,
             commands::reject_observation,
             commands::confirm_all,

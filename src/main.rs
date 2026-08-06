@@ -2,12 +2,13 @@
 mod ingestion;
 mod models;
 mod output;
+mod reads;
 mod storage;
 mod traits;
 
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use tracing::error;
@@ -19,6 +20,7 @@ use models::decay::FieldClass;
 use models::observation::{ObservationField, ObservationStatus, ObservationValue};
 use models::profile::{Annotation, DeltaItem, ProfileDocument, ProfileMeta, ReviewItem};
 use output::Tier;
+use reads::{get_field_rows, list_observations, status_str, ObservationQuery};
 use storage::ProfileStore;
 
 // ── Output format ─────────────────────────────────────────────────────────────
@@ -226,6 +228,26 @@ enum Command {
     /// rejected) into the archive, keeping live lists dense. The audit trail
     /// survives — archived observations are permanent record.
     Compact { user_id: String },
+
+    /// List observations with filters — the read surface for the review loop.
+    ///
+    /// Filters: --status (proposed|confirmed|rejected|delta|archived),
+    /// --path prefix, --term substring (case-insensitive), --limit.
+    List {
+        user_id: String,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        term: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+
+    /// Get one field's observations by exact full path, e.g.
+    /// signals.phrases.2, working.mode, extra.moment.0
+    Get { user_id: String, path: String },
 
     /// Flip a proposed observation to confirmed
     ///
@@ -1194,6 +1216,79 @@ fn cmd_compact(user_id: &str, format: Format) -> Result<()> {
             report.observations_archived,
             report.archive_total
         );
+    }
+    Ok(())
+}
+
+fn cmd_list(
+    user_id: &str,
+    status: Option<&str>,
+    path: Option<&str>,
+    term: Option<&str>,
+    limit: Option<usize>,
+    format: Format,
+) -> Result<()> {
+    let store = ProfileStore::new(ProfileStore::default_dir());
+    let profile = store.load_or_create(user_id)?;
+
+    let status = match status.map(|s| s.to_ascii_lowercase()).as_deref() {
+        None | Some("") => Some(ObservationStatus::Proposed), // default: the review loop's missing read side
+        Some("all") => None,
+        Some("proposed") => Some(ObservationStatus::Proposed),
+        Some("confirmed") => Some(ObservationStatus::Confirmed),
+        Some("rejected") => Some(ObservationStatus::Rejected),
+        Some("delta") => Some(ObservationStatus::Delta),
+        Some("archived") => Some(ObservationStatus::Archived),
+        Some(other) => bail!(
+            "unknown status `{}` (proposed|confirmed|rejected|delta|archived|all)",
+            other
+        ),
+    };
+
+    let q = ObservationQuery {
+        status,
+        path_prefix: path.map(str::to_string),
+        term: term.map(str::to_string),
+        limit,
+    };
+    let rows = list_observations(&profile, &q);
+
+    if format.is_machine() {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        for r in &rows {
+            println!(
+                "{:<36} {:<10} {:>5.2}  {}",
+                r.path,
+                status_str(r.status),
+                r.confidence,
+                r.value
+            );
+        }
+        eprintln!("{} observation(s)", rows.len());
+    }
+    Ok(())
+}
+
+fn cmd_get(user_id: &str, path: &str, format: Format) -> Result<()> {
+    let store = ProfileStore::new(ProfileStore::default_dir());
+    let profile = store.load_or_create(user_id)?;
+
+    let rows =
+        get_field_rows(&profile, path).ok_or_else(|| anyhow!("no field at path `{}`", path))?;
+
+    if format.is_machine() {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        for r in &rows {
+            println!(
+                "{:<36} {:<10} {:>5.2}  {}",
+                r.path,
+                status_str(r.status),
+                r.confidence,
+                r.value
+            );
+        }
     }
     Ok(())
 }
@@ -2408,6 +2503,21 @@ fn main() {
         Command::Show { user_id, tier, md } => cmd_show(&user_id, tier, md, fmt),
         Command::Status { user_id } => cmd_status(&user_id, fmt),
         Command::Compact { user_id } => cmd_compact(&user_id, fmt),
+        Command::List {
+            user_id,
+            status,
+            path,
+            term,
+            limit,
+        } => cmd_list(
+            &user_id,
+            status.as_deref(),
+            path.as_deref(),
+            term.as_deref(),
+            limit,
+            fmt,
+        ),
+        Command::Get { user_id, path } => cmd_get(&user_id, &path, fmt),
         Command::Confirm {
             user_id,
             field,

@@ -26,6 +26,7 @@
 pub mod ingestion;
 pub mod models;
 pub mod output;
+pub mod reads;
 pub mod storage;
 pub mod traits;
 
@@ -44,4 +45,5 @@ pub use models::pidx_type::PidxType;
 pub use models::profile::ProfileDocument;
 pub use models::reinforcement::{reinforce_after_ingest, ReinforcementConfig, ReinforcementResult};
 pub use output::{render_tier_output, Tier};
+pub use reads::{get_field_rows, list_observations, ObservationQuery, ObservationRow};
 pub use storage::ProfileStore;

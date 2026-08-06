@@ -1,7 +1,16 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { getProfile, getStatus, type StatusResult, type ProfileDocument } from '$lib/ipc';
+	import {
+		getProfile,
+		getStatus,
+		listObservations,
+		confirmObservation,
+		rejectObservation,
+		type StatusResult,
+		type ProfileDocument,
+		type ObservationEntry
+	} from '$lib/ipc';
 	import DebuggerView from '$lib/components/DebuggerView.svelte';
 	import InspectorView from '$lib/components/InspectorView.svelte';
 	import GardenerView from '$lib/components/GardenerView.svelte';
@@ -13,8 +22,41 @@
 	let error = $state<string | null>(null);
 	let loading = $state(true);
 
-	type Tab = 'debug' | 'inspect' | 'garden';
+	type Tab = 'debug' | 'inspect' | 'garden' | 'review';
 	let activeTab = $state<Tab>('debug');
+
+	// Review inbox: all proposed observations across fields.
+	let proposed = $state<ObservationEntry[]>([]);
+	let reviewLoading = $state(false);
+	let reviewError = $state<string | null>(null);
+	let pending = $state<string[]>([]);
+
+	async function loadProposed() {
+		reviewLoading = true;
+		reviewError = null;
+		try {
+			proposed = await listObservations(userId, { status: 'proposed' });
+		} catch (e) {
+			reviewError = String(e);
+		} finally {
+			reviewLoading = false;
+		}
+	}
+
+	async function act(entry: ObservationEntry, fn: 'confirm' | 'reject') {
+		const key = `${entry.path}:${entry.obs_index}`;
+		pending = [...pending, key];
+		try {
+			if (fn === 'confirm') {
+				await confirmObservation(userId, entry.path, entry.obs_index);
+			} else {
+				await rejectObservation(userId, entry.path, entry.obs_index);
+			}
+			await Promise.all([loadProposed(), load()]);
+		} finally {
+			pending = pending.filter((k) => k !== key);
+		}
+	}
 
 	const totals = $derived({
 		confirmed: status?.fields.reduce((s, f) => s + f.confirmed, 0) ?? 0,
@@ -34,7 +76,10 @@
 		}
 	}
 
-	onMount(load);
+	onMount(() => {
+		load();
+		loadProposed();
+	});
 </script>
 
 <main class="p-6 max-w-4xl">
@@ -72,7 +117,7 @@
 
 		<!-- Tab bar -->
 		<div class="flex gap-1 mb-5 border-b border-border">
-			{#each [['debug', 'Debugger'], ['inspect', 'Inspector'], ['garden', 'Gardener']] as [id, label]}
+			{#each [['debug', 'Debugger'], ['inspect', 'Inspector'], ['garden', 'Gardener'], ['review', 'Review']] as [id, label]}
 				<button
 					class="px-3 py-1.5 text-sm -mb-px border-b-2 transition-colors {activeTab === id
 						? 'border-accent text-accent'
@@ -89,6 +134,49 @@
 			<InspectorView {userId} {profile} onUpdate={load} />
 		{:else if activeTab === 'garden'}
 			<GardenerView {userId} {profile} onUpdate={load} />
+		{:else if activeTab === 'review'}
+			<!-- Review inbox: every proposed observation, one-click confirm/reject -->
+			<div class="mb-4">
+				<h2 class="text-sm font-semibold text-text-secondary mb-2">
+					Proposed observations ({proposed.length})
+				</h2>
+				{#if reviewError}
+					<p class="text-error text-sm">Error: {reviewError}</p>
+				{:else if reviewLoading}
+					<p class="text-text-muted text-sm">Loading…</p>
+				{:else if proposed.length === 0}
+					<p class="text-text-muted text-sm">No proposed observations. Clean inbox.</p>
+				{:else}
+					<ul class="space-y-2">
+						{#each proposed as entry (entry.path + ':' + entry.obs_index)}
+							{@const key = `${entry.path}:${entry.obs_index}`}
+							<li class="border border-border rounded-md p-3">
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0">
+										<div class="text-xs text-text-muted font-mono">{entry.path}</div>
+										<p class="text-sm text-text-secondary mt-1">{entry.value}</p>
+										<div class="text-xs text-text-muted mt-1">
+											{Math.round(entry.confidence * 100)}% · {entry.source}
+										</div>
+									</div>
+									<div class="flex gap-2 shrink-0">
+										<button
+											class="px-2 py-1 text-xs rounded border border-accent text-accent hover:bg-accent/10 disabled:opacity-40"
+											disabled={pending.includes(key)}
+											onclick={() => act(entry, 'confirm')}
+										>Confirm</button>
+										<button
+											class="px-2 py-1 text-xs rounded border border-error text-error hover:bg-error/10 disabled:opacity-40"
+											disabled={pending.includes(key)}
+											onclick={() => act(entry, 'reject')}
+										>Reject</button>
+									</div>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </main>

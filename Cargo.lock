@@ -2648,23 +2648,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pidx-ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "pidx",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "pidx-ui-svelte"
 version = "0.1.0"
 dependencies = [

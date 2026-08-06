@@ -29,6 +29,32 @@ export interface FieldSummary {
 	delta: number;
 }
 
+// ── Read surface (list_observations / get_observation) ────────────────────────
+
+export interface ObservationEntry {
+	path: string;
+	index: number;
+	obs_index: number;
+	value: string;
+	status: ObservationStatus;
+	source: string;
+	confidence: number;
+	updated: string;
+}
+
+export async function listObservations(
+	userId: string,
+	opts?: { status?: string; path?: string; term?: string; limit?: number }
+): Promise<ObservationEntry[]> {
+	return invoke('list_observations', {
+		user_id: userId,
+		status: opts?.status ?? null,
+		path: opts?.path ?? null,
+		term: opts?.term ?? null,
+		limit: opts?.limit ?? null
+	});
+}
+
 export interface StatusResult {
 	user_id: string;
 	version: string;

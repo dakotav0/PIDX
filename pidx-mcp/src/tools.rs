@@ -80,6 +80,43 @@ pub struct PidxCompactTool {
     pub user_id: String,
 }
 
+/// List observations with filters — the read surface for the review loop.
+#[macros::mcp_tool(
+    name = "pidx_list_observations",
+    description = "List observations with full dot-paths, filterable by status (defaults to proposed), path prefix, and value term. The read surface for the propose→validate→review→act loop."
+)]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PidxListObservationsTool {
+    /// User ID
+    pub user_id: String,
+    /// Only rows with this status (proposed|confirmed|rejected|delta|archived|all).
+    /// Defaults to proposed when omitted.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Only rows whose path starts with this prefix (e.g. "signals.phrases").
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Only rows whose value contains this substring (case-insensitive).
+    #[serde(default)]
+    pub term: Option<String>,
+    /// Cap on returned rows. 0 (default) = no cap.
+    #[serde(default)]
+    pub limit: u64,
+}
+
+/// Get one field's observations by exact full path, e.g. signals.phrases.2
+#[macros::mcp_tool(
+    name = "pidx_get_observation",
+    description = "Get one field's observations by exact full path (signals.phrases.2, working.mode, extra.moment.0). Returns rows with value, status, source, confidence, and updated timestamp."
+)]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PidxGetObservationTool {
+    /// User ID
+    pub user_id: String,
+    /// Full dot-path: signals.phrases.2, working.mode, extra.moment.0
+    pub path: String,
+}
+
 /// Ingest a bridge packet JSON file into a profile.
 #[macros::mcp_tool(
     name = "pidx_ingest",
@@ -298,6 +335,8 @@ tool_box!(
         PidxShowTool,
         PidxStatusTool,
         PidxCompactTool,
+        PidxListObservationsTool,
+        PidxGetObservationTool,
         PidxIngestTool,
         PidxMailboxScanTool,
         PidxConfirmTool,
@@ -362,6 +401,8 @@ impl ServerHandler for PidxHandler {
             PidxTools::PidxShowTool(t) => self.handle_show(t).await,
             PidxTools::PidxStatusTool(t) => self.handle_status(t).await,
             PidxTools::PidxCompactTool(t) => self.handle_compact(t).await,
+            PidxTools::PidxListObservationsTool(t) => self.handle_list_observations(t).await,
+            PidxTools::PidxGetObservationTool(t) => self.handle_get_observation(t).await,
             PidxTools::PidxIngestTool(t) => self.handle_ingest(t).await,
             PidxTools::PidxMailboxScanTool(t) => self.handle_mailbox_scan(t).await,
             PidxTools::PidxConfirmTool(t) => self.handle_confirm(t).await,
@@ -593,6 +634,54 @@ impl PidxHandler {
             "observations_archived": report.observations_archived,
             "archive_total": report.archive_total,
         }))
+    }
+
+    async fn handle_list_observations(&self, t: PidxListObservationsTool) -> ToolResult {
+        use pidx::models::observation::ObservationStatus;
+        use pidx::reads::{list_observations, ObservationQuery};
+
+        let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
+
+        // Default: proposed — the review loop's missing read side. Explicit
+        // statuses opt into other states.
+        let status = match t.status.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("") => Some(ObservationStatus::Proposed),
+            Some("all") => None,
+            Some("proposed") => Some(ObservationStatus::Proposed),
+            Some("confirmed") => Some(ObservationStatus::Confirmed),
+            Some("rejected") => Some(ObservationStatus::Rejected),
+            Some("delta") => Some(ObservationStatus::Delta),
+            Some("archived") => Some(ObservationStatus::Archived),
+            Some(other) => {
+                return Err(tool_err(format!(
+                    "unknown status `{other}` (proposed|confirmed|rejected|delta|archived|all)"
+                )))
+            }
+        };
+
+        let q = ObservationQuery {
+            status,
+            path_prefix: t.path.clone(),
+            term: t.term.clone(),
+            limit: (t.limit > 0).then_some(t.limit as usize),
+        };
+        let rows = list_observations(&profile, &q);
+
+        info!(user_id = %t.user_id, rows = rows.len(), "pidx_list_observations");
+        json_text(&serde_json::json!({ "user_id": t.user_id, "observations": rows }))
+    }
+
+    async fn handle_get_observation(&self, t: PidxGetObservationTool) -> ToolResult {
+        use pidx::reads::get_field_rows;
+
+        let profile = self.store.load_or_create(&t.user_id).map_err(tool_err)?;
+        let rows = get_field_rows(&profile, &t.path)
+            .ok_or_else(|| tool_err(format!("no field at path `{}`", t.path)))?;
+
+        info!(user_id = %t.user_id, path = %t.path, "pidx_get_observation");
+        json_text(
+            &serde_json::json!({ "user_id": t.user_id, "path": t.path, "observations": rows }),
+        )
     }
 
     async fn handle_ingest(&self, t: PidxIngestTool) -> ToolResult {

@@ -200,6 +200,66 @@ pub async fn get_show(
     Ok(render_tier_output(&mut profile, tier))
 }
 
+/// List observations with filters — the review inbox read surface.
+/// Defaults to proposed when no status given.
+#[tauri::command]
+pub async fn list_observations(
+    user_id: String,
+    status: Option<String>,
+    path: Option<String>,
+    term: Option<String>,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::models::observation::ObservationStatus;
+    use pidx::reads::{list_observations as lib_list, ObservationQuery};
+
+    let profile = load_cached(&state, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = match status.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        None | Some("") => Some(ObservationStatus::Proposed),
+        Some("all") => None,
+        Some("proposed") => Some(ObservationStatus::Proposed),
+        Some("confirmed") => Some(ObservationStatus::Confirmed),
+        Some("rejected") => Some(ObservationStatus::Rejected),
+        Some("delta") => Some(ObservationStatus::Delta),
+        Some("archived") => Some(ObservationStatus::Archived),
+        Some(other) => {
+            return Err(format!(
+                "unknown status `{other}` (proposed|confirmed|rejected|delta|archived|all)"
+            ))
+        }
+    };
+
+    let q = ObservationQuery {
+        status,
+        path_prefix: path,
+        term,
+        limit,
+    };
+    let rows = lib_list(&profile, &q);
+    Ok(serde_json::to_value(rows).map_err(|e| e.to_string())?)
+}
+
+/// Get one field's observations by exact full path.
+#[tauri::command]
+pub async fn get_observation(
+    user_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::reads::get_field_rows;
+
+    let profile = load_cached(&state, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows =
+        get_field_rows(&profile, &path).ok_or_else(|| format!("no field at path `{path}`"))?;
+    Ok(serde_json::to_value(rows).map_err(|e| e.to_string())?)
+}
+
 /// Get observation status summary.
 #[tauri::command]
 pub async fn get_status(
