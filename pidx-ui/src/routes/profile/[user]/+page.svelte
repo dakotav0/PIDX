@@ -14,6 +14,7 @@
 	import DebuggerView from '$lib/components/DebuggerView.svelte';
 	import InspectorView from '$lib/components/InspectorView.svelte';
 	import GardenerView from '$lib/components/GardenerView.svelte';
+	import ProfileView from '$lib/components/ProfileView.svelte';
 
 	const userId = $derived(page.params.user!);
 
@@ -22,8 +23,8 @@
 	let error = $state<string | null>(null);
 	let loading = $state(true);
 
-	type Tab = 'debug' | 'inspect' | 'garden' | 'review';
-	let activeTab = $state<Tab>('debug');
+	type Tab = 'profile' | 'review' | 'garden' | 'inspect' | 'debug';
+	let activeTab = $state<Tab>('profile');
 
 	// Review inbox: all proposed observations across fields.
 	let proposed = $state<ObservationEntry[]>([]);
@@ -117,7 +118,7 @@
 
 		<!-- Tab bar -->
 		<div class="flex gap-1 mb-5 border-b border-border">
-			{#each [['debug', 'Debugger'], ['inspect', 'Inspector'], ['garden', 'Gardener'], ['review', 'Review']] as [id, label]}
+			{#each [['profile', 'Profile'], ['review', 'Review'], ['garden', 'Gardener'], ['inspect', 'Inspector'], ['debug', 'Debugger']] as [id, label]}
 				<button
 					class="px-3 py-1.5 text-sm -mb-px border-b-2 transition-colors {activeTab === id
 						? 'border-accent text-accent'
@@ -128,7 +129,9 @@
 		</div>
 
 		<!-- Tab content -->
-		{#if activeTab === 'debug'}
+		{#if activeTab === 'profile'}
+			<ProfileView {userId} {profile} />
+		{:else if activeTab === 'debug'}
 			<DebuggerView {userId} {status} {profile} onUpdate={load} />
 		{:else if activeTab === 'inspect'}
 			<InspectorView {userId} {profile} onUpdate={load} />

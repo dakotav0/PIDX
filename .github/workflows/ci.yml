@@ -73,5 +73,9 @@ jobs:
         working-directory: pidx-ui
         run: npm run check
 
+      - name: Vite build
+        working-directory: pidx-ui
+        run: npm run build
+
       - name: Clippy (Tauri crate)
         run: cargo clippy -p pidx-ui-svelte -- -D warnings

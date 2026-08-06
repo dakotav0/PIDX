@@ -47,7 +47,7 @@ export async function listObservations(
 	opts?: { status?: string; path?: string; term?: string; limit?: number }
 ): Promise<ObservationEntry[]> {
 	return invoke('list_observations', {
-		user_id: userId,
+		userId: userId,
 		status: opts?.status ?? null,
 		path: opts?.path ?? null,
 		term: opts?.term ?? null,
@@ -113,6 +113,15 @@ export interface ReviewItem {
 	resolved: boolean;
 }
 
+export interface AnnotationEntry {
+	id: string;
+	field: string;
+	note: string;
+	author: string;
+	created_at: string;
+	pinned: boolean;
+}
+
 export interface ProfileDocument {
 	meta: {
 		user_id: string;
@@ -145,7 +154,9 @@ export interface ProfileDocument {
 	};
 	delta_queue: DeltaItem[];
 	review_queue: ReviewItem[];
-	annotations: unknown[];
+	annotations: AnnotationEntry[];
+	extra: Record<string, ProfileField[]>;
+	comm: Record<string, { evidence: unknown[] }>;
 }
 
 export interface DeltaEntry {
@@ -170,15 +181,27 @@ export function listUsers(): Promise<{ count: number; users: UserEntry[] }> {
 }
 
 export function getProfile(userId: string): Promise<ProfileDocument> {
-	return invoke('get_profile', { user_id: userId });
+	return invoke('get_profile', { userId: userId });
 }
 
 export function getShow(userId: string, tier: 'nano' | 'micro' | 'standard' | 'rich'): Promise<string> {
-	return invoke('get_show', { user_id: userId, tier });
+	return invoke('get_show', { userId: userId, tier });
 }
 
 export function getStatus(userId: string): Promise<StatusResult> {
-	return invoke('get_status', { user_id: userId });
+	return invoke('get_status', { userId: userId });
+}
+
+// ── Register scores (computed at read-time server-side) ──────────────────────
+
+export interface RegisterMetric {
+	name: string;
+	score: number; // 0.0–10.0 — computed by get_register, never reimplemented client-side
+	evidence_count: number;
+}
+
+export function getRegister(userId: string): Promise<RegisterMetric[]> {
+	return invoke('get_register', { userId: userId });
 }
 
 // ── Write commands ────────────────────────────────────────────────────────────
@@ -188,7 +211,7 @@ export function confirmObservation(
 	field: string,
 	index: number
 ): Promise<OkResult & { field: string; index: number; value: string; new_status: string }> {
-	return invoke('confirm_observation', { user_id: userId, field, index });
+	return invoke('confirm_observation', { userId: userId, field, index });
 }
 
 export function rejectObservation(
@@ -196,28 +219,28 @@ export function rejectObservation(
 	field: string,
 	index: number
 ): Promise<OkResult & { field: string; index: number; new_status: string }> {
-	return invoke('reject_observation', { user_id: userId, field, index });
+	return invoke('reject_observation', { userId: userId, field, index });
 }
 
 export function confirmAll(
 	userId: string,
 	fieldPrefix: string
 ): Promise<OkResult & { confirmed_count: number; fields: string[] }> {
-	return invoke('confirm_all', { user_id: userId, field_prefix: fieldPrefix });
+	return invoke('confirm_all', { userId: userId, fieldPrefix: fieldPrefix });
 }
 
 export function rejectAll(
 	userId: string,
 	fieldPrefix: string
 ): Promise<OkResult & { rejected_count: number; fields: string[] }> {
-	return invoke('reject_all', { user_id: userId, field_prefix: fieldPrefix });
+	return invoke('reject_all', { userId: userId, fieldPrefix: fieldPrefix });
 }
 
 export function clearProfile(
 	userId: string,
 	target: 'deltas' | 'reviews' | 'proposed' | 'all'
 ): Promise<OkResult & { target: string; cleared_count: number }> {
-	return invoke('clear', { user_id: userId, target });
+	return invoke('clear', { userId: userId, target });
 }
 
 // ── Lifecycle commands ────────────────────────────────────────────────────────
@@ -226,14 +249,14 @@ export function ingestPacketContent(
 	userId: string,
 	packetJson: string
 ): Promise<OkResult & { observations_proposed: number; deltas_flagged: number }> {
-	return invoke('ingest_packet_content', { user_id: userId, packet_json: packetJson });
+	return invoke('ingest_packet_content', { userId: userId, packetJson: packetJson });
 }
 
 export function ingestPacket(
 	userId: string,
 	packetPath: string
 ): Promise<OkResult & { observations_proposed: number; deltas_flagged: number }> {
-	return invoke('ingest_packet', { user_id: userId, packet_path: packetPath });
+	return invoke('ingest_packet', { userId: userId, packetPath: packetPath });
 }
 
 export function resolveReview(
@@ -241,7 +264,7 @@ export function resolveReview(
 	reviewId: string,
 	action: 'keep' | 'discard'
 ): Promise<OkResult & { review_id: string; action: string; field: string }> {
-	return invoke('resolve_review', { user_id: userId, review_id: reviewId, action });
+	return invoke('resolve_review', { userId: userId, reviewId: reviewId, action });
 }
 
 export function resolveDelta(
@@ -249,7 +272,7 @@ export function resolveDelta(
 	deltaId: string,
 	keep: 'a' | 'b'
 ): Promise<OkResult & { delta_id: string; kept: string; field: string }> {
-	return invoke('resolve_delta', { user_id: userId, delta_id: deltaId, keep });
+	return invoke('resolve_delta', { userId: userId, deltaId: deltaId, keep });
 }
 
 export function annotate(
@@ -258,12 +281,12 @@ export function annotate(
 	note: string,
 	pinned: boolean
 ): Promise<OkResult & { id: string; field: string; note: string; pinned: boolean }> {
-	return invoke('annotate', { user_id: userId, field, note, pinned });
+	return invoke('annotate', { userId: userId, field, note, pinned });
 }
 
 export function runDecay(
 	userId: string,
 	threshold?: number
 ): Promise<OkResult & { newly_flagged: number; review_queue_pending: number }> {
-	return invoke('decay', { user_id: userId, threshold });
+	return invoke('decay', { userId: userId, threshold });
 }

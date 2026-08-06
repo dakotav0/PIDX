@@ -68,6 +68,51 @@ export function fieldConfidence(profile: ProfileDocument, path: string): number 
 	return Math.max(...confirmed.map((o) => o.confidence));
 }
 
+// ── Confirmed-observation helpers (display = confirmed only) ─────────────────
+
+export const REGISTER_METRICS: { key: string; label: string }[] = [
+	{ key: 'formality', label: 'formality' },
+	{ key: 'directness', label: 'directness' },
+	{ key: 'hedging', label: 'hedging' },
+	{ key: 'humor', label: 'humor' },
+	{ key: 'abstraction', label: 'abstraction' },
+	{ key: 'affect', label: 'affect' }
+];
+
+export function confirmedObs(field: ProfileField | null | undefined): ObservationRow[] {
+	return (field?.observations ?? []).filter((o) => o.status === 'confirmed');
+}
+
+/** Top confirmed observations of one field, by confidence (desc). */
+export function topConfirmed(field: ProfileField | null | undefined, n = 6): ObservationRow[] {
+	return confirmedObs(field).sort((a, b) => b.confidence - a.confidence).slice(0, n);
+}
+
+/** Top confirmed observations across a list of fields (identity.core, values, …). */
+export function listConfirmed(fields: ProfileField[], n = 8): ObservationRow[] {
+	return fields
+		.flatMap((f) => confirmedObs(f))
+		.sort((a, b) => b.confidence - a.confidence)
+		.slice(0, n);
+}
+
+// ── Section view-model (ProfileSection.svelte) ────────────────────────────────
+
+export interface SectionItem {
+	key?: string;
+	value: string;
+	confidence?: number;
+	source?: string;
+}
+
+export function obsToItem(o: ObservationRow): SectionItem {
+	return {
+		value: formatObsValue(o.value),
+		confidence: o.confidence,
+		source: o.source.orientation
+	};
+}
+
 export function formatObsValue(
 	value: string | number | ObservationDomainValue
 ): string {

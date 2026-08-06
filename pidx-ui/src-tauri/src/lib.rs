@@ -18,6 +18,7 @@ pub fn run() {
             commands::list_users,
             commands::get_profile,
             commands::get_show,
+            commands::get_register,
             commands::get_status,
             commands::list_observations,
             commands::get_observation,

@@ -200,6 +200,45 @@ pub async fn get_show(
     Ok(render_tier_output(&mut profile, tier))
 }
 
+/// Compute live register scores for the six communication dimensions.
+///
+/// Scores are computed at read-time (never stored) — the frontend should not
+/// reimplement the decay formula; this is the server's job.
+#[tauri::command]
+pub async fn get_register(
+    user_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use pidx::models::evidence::RegisterMetric;
+
+    let profile = load_cached(&state, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let metrics: Vec<(&str, &RegisterMetric)> = vec![
+        ("formality", &profile.comm.formality),
+        ("directness", &profile.comm.directness),
+        ("hedging", &profile.comm.hedging),
+        ("humor", &profile.comm.humor),
+        ("abstraction", &profile.comm.abstraction),
+        ("affect", &profile.comm.affect),
+    ];
+
+    let out: Vec<serde_json::Value> = metrics
+        .into_iter()
+        .map(|(name, metric)| {
+            serde_json::json!({
+                "name": name,
+                "score": metric.score(None),
+                "evidence_count": metric.evidence.len(),
+            })
+        })
+        .collect();
+
+    info!(user_id = %user_id, "get_register");
+    serde_json::to_value(out).map_err(|e| e.to_string())
+}
+
 /// List observations with filters — the review inbox read surface.
 /// Defaults to proposed when no status given.
 #[tauri::command]
@@ -240,7 +279,7 @@ pub async fn list_observations(
         limit,
     };
     let rows = lib_list(&profile, &q);
-    Ok(serde_json::to_value(rows).map_err(|e| e.to_string())?)
+    serde_json::to_value(rows).map_err(|e| e.to_string())
 }
 
 /// Get one field's observations by exact full path.
@@ -257,7 +296,7 @@ pub async fn get_observation(
         .map_err(|e| e.to_string())?;
     let rows =
         get_field_rows(&profile, &path).ok_or_else(|| format!("no field at path `{path}`"))?;
-    Ok(serde_json::to_value(rows).map_err(|e| e.to_string())?)
+    serde_json::to_value(rows).map_err(|e| e.to_string())
 }
 
 /// Get observation status summary.
