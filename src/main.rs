@@ -1393,7 +1393,7 @@ fn cmd_delta_resolve(user_id: &str, delta_id: &str, keep: &str, format: Format) 
     let store = ProfileStore::new(ProfileStore::default_dir());
     let mut profile = store.load_or_create(user_id)?;
 
-    let (field_path, keep_session, reject_session) = {
+    let (field_path, keep_obs, reject_obs) = {
         let d = profile
             .delta_queue
             .iter()
@@ -1404,11 +1404,7 @@ fn cmd_delta_resolve(user_id: &str, delta_id: &str, keep: &str, format: Format) 
         } else {
             (&d.b, &d.a)
         };
-        (
-            d.field.clone(),
-            keep_obs.source.session_ref.clone(),
-            reject_obs.source.session_ref.clone(),
-        )
+        (d.field.clone(), keep_obs.clone(), reject_obs.clone())
     };
 
     for d in profile.delta_queue.iter_mut() {
@@ -1420,12 +1416,16 @@ fn cmd_delta_resolve(user_id: &str, delta_id: &str, keep: &str, format: Format) 
 
     if let Some(field) = resolve_field_mut(&mut profile, &field_path) {
         for obs in field.observations.iter_mut() {
-            if obs.status == ObservationStatus::Delta {
-                if obs.source.session_ref == keep_session {
-                    obs.status = ObservationStatus::Confirmed;
-                } else if obs.source.session_ref == reject_session {
-                    obs.status = ObservationStatus::Rejected;
-                }
+            // Match by provenance (value + session), not by status: since
+            // 2026-08-07 the confirmed side of a delta is no longer downgraded
+            // to Delta, so a status filter would miss it.
+            if obs.value == keep_obs.value && obs.source.session_ref == keep_obs.source.session_ref
+            {
+                obs.status = ObservationStatus::Confirmed;
+            } else if obs.value == reject_obs.value
+                && obs.source.session_ref == reject_obs.source.session_ref
+            {
+                obs.status = ObservationStatus::Rejected;
             }
         }
     }

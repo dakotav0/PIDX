@@ -46,7 +46,7 @@ pub struct ObservationSource {
 // ── DomainEntry ──────────────────────────────────────────────────────────────
 
 /// A domain expertise cluster observation value.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DomainEntry {
     pub label: String,
     /// Relative weight of this domain in the overall cluster (0.0–1.0).
@@ -84,7 +84,7 @@ fn default_domain_weight() -> f64 {
 /// directly without a wrapper key. `Text("hello")` → `"hello"` in JSON.
 /// `Domain(DomainEntry { .. })` → `{"label": "...", "weight": 1.0}`.
 /// This matches the Python output exactly.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ObservationValue {
     Text(String),

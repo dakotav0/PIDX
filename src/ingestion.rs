@@ -390,11 +390,28 @@ fn ingest_one_observation(
             *proposed += 1;
         }
         FieldRoute::Field(f, _fc) => {
+            // Same-session re-assertion of an existing value is a duplicate
+            // (a packet ingested twice, e.g. adap-cli). Corroborate in place
+            // instead of appending a twin — this is what kept forming
+            // confirmed+proposed duplicate pairs in live profiles.
+            let dup_idx = f.observations.iter().position(|o| {
+                o.source.session_ref == src.session_ref && values_match(&o.value, value)
+            });
+            if let Some(idx) = dup_idx {
+                // Re-assertion hardens the existing observation; status is kept.
+                f.observations[idx].weight += 1.0;
+                return;
+            }
+
             let conflict_idx = f.observations.iter().position(|o| {
                 o.status == ObservationStatus::Confirmed && values_conflict(&o.value, value)
             });
             if let Some(idx) = conflict_idx {
-                f.observations[idx].status = ObservationStatus::Delta;
+                // Park the newcomer as a delta. The existing CONFIRMED
+                // observation stays confirmed — the delta entry holds the
+                // dispute and resolution decides which side survives. (Before
+                // 2026-08-07 this downgraded the confirmed side to Delta,
+                // which hid it from confirmed counts until resolved.)
                 new_obs.status = ObservationStatus::Delta;
                 pending_delta = Some(DeltaItem {
                     id: Uuid::new_v4().to_string(),
@@ -1087,8 +1104,45 @@ mod tests {
         assert_eq!(deltas, 1);
         assert_eq!(profile.delta_queue.len(), 1);
 
+        // The confirmed side stays confirmed; only the newcomer is parked as delta.
         let obs = &profile.working.mode.observations;
-        assert!(obs.iter().all(|o| o.status == ObservationStatus::Delta));
+        assert_eq!(obs.len(), 2);
+        assert_eq!(obs[0].status, ObservationStatus::Confirmed);
+        assert_eq!(obs[1].status, ObservationStatus::Delta);
+    }
+
+    #[test]
+    fn same_session_reassertion_is_merged_not_appended() {
+        let mut profile = ProfileDocument::new("test");
+        let p1 = single_obs_packet("working.mode", json!("sketch-first"));
+
+        let (proposed, _deltas, _extra) = ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
+        assert_eq!(proposed, 1);
+
+        // Same packet (same session, same value) re-asserted — no twin appended.
+        let (proposed2, _deltas2, _extra2) =
+            ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
+        assert_eq!(proposed2, 0);
+        assert_eq!(profile.working.mode.observations.len(), 1);
+
+        // Hardening: the re-assertion bumped weight.
+        assert_eq!(profile.working.mode.observations[0].weight, 2.0);
+    }
+
+    #[test]
+    fn reassert_confirmed_twin_does_not_form_duplicate_pair() {
+        let mut profile = ProfileDocument::new("test");
+        let p1 = single_obs_packet("working.mode", json!("sketch-first"));
+        ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
+        profile.working.mode.observations[0].status = ObservationStatus::Confirmed;
+
+        // Re-assert the same value from the same session — must not add a
+        // proposed twin next to the confirmed observation.
+        let (proposed, _deltas, _extra) = ingest_bridge_packet(&mut profile, &p1, "p1.bridge.json");
+        assert_eq!(proposed, 0);
+        let obs = &profile.working.mode.observations;
+        assert_eq!(obs.len(), 1);
+        assert_eq!(obs[0].status, ObservationStatus::Confirmed);
     }
 
     #[test]
