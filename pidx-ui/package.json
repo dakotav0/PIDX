@@ -18,7 +18,7 @@
 		"@tailwindcss/vite": "^4.2.2",
 		"@tauri-apps/api": "^2",
 		"@tauri-apps/plugin-shell": "^2",
-		"tailwindcss": "^4.2.2"
+		"tailwindcss": "^4.2.4"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.4",
